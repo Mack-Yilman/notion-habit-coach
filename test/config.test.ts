@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { estadoFromName, findProp, normalize, rangoFromName } from '../src/config';
-import { decodeCallback, encodeEstado, encodeInfo } from '../src/callback';
+import { decodeCallback, encodeDeshacer, encodeEstado } from '../src/callback';
 
 describe('normalize', () => {
   it('quita tildes, emojis, espacios sobrantes y mayúsculas', () => {
@@ -49,8 +49,11 @@ describe('callback_data', () => {
     expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
     expect(decodeCallback(data)).toEqual({ kind: 'estado', pageId: '3f727351c36780aabbbb0123456789ab', estado: 'hecho' });
   });
-  it('botón de número (info)', () => {
-    expect(decodeCallback(encodeInfo('3f727351-c367-80aa-bbbb-0123456789ab'))).toEqual({ kind: 'info', pageId: '3f727351c36780aabbbb0123456789ab' });
+  it('↩️ deshacer vuelve a Sin iniciar', () => {
+    expect(decodeCallback(encodeDeshacer('3f727351-c367-80aa-bbbb-0123456789ab'))).toEqual({ kind: 'estado', pageId: '3f727351c36780aabbbb0123456789ab', estado: 'sin_iniciar' });
+  });
+  it('los botones de número de la versión anterior ya no son válidos', () => {
+    expect(decodeCallback('i:3f727351c36780aabbbb0123456789ab')).toBeNull();
   });
   it('rechaza datos malformados', () => {
     expect(decodeCallback('e:xyz:h')).toBeNull();

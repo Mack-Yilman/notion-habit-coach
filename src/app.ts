@@ -1,9 +1,10 @@
 // Contexto por invocación (nunca estado global) y accesos a Notion con caché en KV.
 
 import type { Env } from './env';
-import { hasStreakProps, parseEntry, resolveHabitosSchema, statsFromEntries, type Entry, type HabitosSchema, type Stats } from './habits';
+import { hasStreakProps, isPending, parseEntry, resolveHabitosSchema, sortEntries, statsFromEntries, type Entry, type HabitosSchema, type Stats } from './habits';
 import { complete, type LlmOptions } from './llm';
-import { getCachedMatrices, refreshMatrices, type Matrix } from './matrix';
+import { getCachedMatrices, refreshMatrices, senalesDe, type Matrix } from './matrix';
+import { renderCard } from './messages';
 import { Notion } from './notion';
 import { parseSchedule, type SlotKey } from './schedule';
 import { Telegram } from './telegram';
@@ -111,11 +112,11 @@ export async function coachData(app: App, entries: Entry[], date = app.now.date)
 
 // ---------- Contexto de mensajes con botones ----------
 
+/** Contexto de una tarjeta de hábito: la cabecera se conserva al editarla tras un botón. */
 export interface MsgContext {
-  kind: 'lista' | 'hoy';
-  header: string;
-  date: string;
-  ids: string[];
+  kind: 'habito';
+  header?: string;
+  pageId: string;
 }
 
 const msgKey = (id: number) => `msg:${id}`;
@@ -124,8 +125,27 @@ export async function saveMsgContext(app: App, messageId: number, ctx: MsgContex
   await app.kv.put(msgKey(messageId), JSON.stringify(ctx), { expirationTtl: 3 * 86400 });
 }
 
-export function getMsgContext(app: App, messageId: number): Promise<MsgContext | null> {
-  return app.kv.get<MsgContext>(msgKey(messageId), 'json');
+/** Devuelve null también para contextos de versiones anteriores (mensajes con lista). */
+export async function getMsgContext(app: App, messageId: number): Promise<MsgContext | null> {
+  const ctx = await app.kv.get<MsgContext | { kind: string }>(msgKey(messageId), 'json');
+  return ctx?.kind === 'habito' ? (ctx as MsgContext) : null;
+}
+
+/**
+ * Envía una tarjeta por cada hábito pendiente. Solo la primera lleva `header` y suena;
+ * las demás llegan en silencio para no llenar de notificaciones.
+ */
+export async function enviarTarjetas(app: App, entries: Entry[], header?: string, leerMatrices = 0): Promise<number> {
+  const pendientes = sortEntries(entries.filter(isPending));
+  if (!pendientes.length) return 0;
+  const senales = senalesDe(await matricesFor(app, entries, leerMatrices));
+  for (const [i, e] of pendientes.entries()) {
+    const h = i === 0 ? header : undefined;
+    const r = renderCard(e, e.habitId ? senales[e.habitId] : undefined, h);
+    const msg = await app.tg.send(app.chatId, r.text, r.keyboard, { silent: i > 0 });
+    await saveMsgContext(app, msg.message_id, { kind: 'habito', pageId: e.pageId, ...(h ? { header: h } : {}) });
+  }
+  return pendientes.length;
 }
 
 // ---------- Seguridad ----------

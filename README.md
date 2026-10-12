@@ -5,8 +5,7 @@ Bot de Telegram con coach de IA que hace accionable tu plantilla Habit Tracker P
 ## Qué hace
 
 - **Avisos por bloque horario**: Notificaciones según tu momento del día (no por hora fija), con la lista de hábitos pendientes y la «Señal» de la Matriz Atómica asociada a cada uno.
-- **Registro rápido con botones**: cada hábito del aviso lleva un número (1️⃣, 2️⃣…) y una fila de íconos, en el mismo orden que el Protocolo de la plantilla. Tocar un ícono guarda ese estado en Notion; el actual aparece como ✅ y el número muestra el nombre del hábito:
-  - ⚪ **Sin iniciar** (para deshacer)
+- **Registro rápido con botones**: cada hábito pendiente llega en su propio mensaje con 5 íconos, en el mismo orden que el Protocolo de la plantilla (solo el primer mensaje del bloque suena). Tocar un ícono guarda ese nivel en Notion y el mensaje queda registrado con un botón ↩️ para deshacer:
   - 💤 **Omitido**
   - 🕯️ **Parcial**
   - ⚡ **Hecho**
@@ -211,7 +210,7 @@ node scripts/setup.mjs webhook --url https://notion-habit-coach.<tu-subdominio>.
 
 ### 13) Probar el bot
 
-Escribe `/hoy` en Telegram. El bot responderá con los hábitos de hoy y sus botones para marcar estado.
+Escribe `/hoy` en Telegram. El bot responderá con el resumen del día y un mensaje con botones por cada hábito pendiente.
 
 ## Activar recurrencias y agregar hábitos
 
@@ -237,7 +236,7 @@ Tras editar Matrices, envía `/actualizar` al bot para que las vuelva a leer.
 
 | Comando | Descripción |
 | --- | --- |
-| `/hoy` | Muestra todos los hábitos de hoy con botones interactivos. |
+| `/hoy` | Resumen del día y un mensaje con botones por cada hábito pendiente. |
 | `/pendientes` | Lista únicamente los hábitos pendientes de hoy. |
 | `/rachas` | Muestra el estado de tus rachas y congeladores disponibles. |
 | `/resumen` | Solicita una intervención del coach de IA en el momento. |

@@ -59,7 +59,7 @@ function matches(filter: any, p: any): boolean {
 
 function fakeApp(nowUtc: string, rows: any[]) {
   const updates: { id: string; props: any }[] = [];
-  const sent: { text: string; keyboard?: unknown }[] = [];
+  const sent: { text: string; keyboard?: unknown; silent?: boolean }[] = [];
   const notion = {
     async getDataSource() {
       return {
@@ -99,8 +99,8 @@ function fakeApp(nowUtc: string, rows: any[]) {
     kv: kv as any,
     notion: notion as any,
     tg: {
-      async send(_chat: string, text: string, keyboard?: unknown) {
-        sent.push({ text, keyboard });
+      async send(_chat: string, text: string, keyboard?: unknown, opts: { silent?: boolean } = {}) {
+        sent.push({ text, keyboard, silent: opts.silent });
         return { message_id: sent.length };
       },
     } as any,
@@ -206,6 +206,19 @@ describe('runScheduled', () => {
     expect(sent[0]!.text).toContain('🔥4');
     expect(sent[0]!.text).not.toContain('Agua'); // ya registrado
     expect(kv.m.get('sent:2026-10-14:manana')).toBe('hecho');
+  });
+
+  it('un mensaje por pendiente: solo el primero lleva cabecera y suena', async () => {
+    const { app, sent } = fakeApp('2026-10-14T11:30:00Z', [
+      row('g14', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar'),
+      row('a14', 'h-agua', 'Agua', '2026-10-14', '⚪ Sin iniciar'),
+    ]);
+    await runScheduled(app);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]!.text).toContain('Buenos días');
+    expect(sent[0]!.silent).toBeFalsy();
+    expect(sent[1]!.text).not.toContain('Buenos días');
+    expect(sent[1]!.silent).toBe(true);
   });
 
   it('no envía nada si no hay pendientes en el bloque', async () => {

@@ -40,20 +40,31 @@ export class Telegram {
   }
 
   /** Envía en HTML; si Telegram no puede interpretar las etiquetas, reenvía como texto plano. */
-  async send(chatId: string, text: string, keyboard?: Keyboard): Promise<{ message_id: number }> {
+  async send(chatId: string, text: string, keyboard?: Keyboard, opts: { silent?: boolean } = {}): Promise<{ message_id: number }> {
     const markup = keyboard?.length ? { reply_markup: { inline_keyboard: keyboard } } : {};
+    const extra = { ...markup, ...(opts.silent ? { disable_notification: true } : {}) };
     try {
       return await this.call('sendMessage', {
         chat_id: chatId,
         text,
         parse_mode: 'HTML',
         link_preview_options: { is_disabled: true },
-        ...markup,
+        ...extra,
       });
     } catch (e) {
       if (e instanceof TelegramError && /parse entities/i.test(e.description)) {
-        return this.call('sendMessage', { chat_id: chatId, text: stripTags(text), ...markup });
+        return this.call('sendMessage', { chat_id: chatId, text: stripTags(text), ...extra });
       }
+      throw e;
+    }
+  }
+
+  /** Quita los botones de un mensaje (p. ej. uno de una versión anterior del bot). */
+  async clearKeyboard(chatId: string, messageId: number): Promise<void> {
+    try {
+      await this.call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } });
+    } catch (e) {
+      if (e instanceof TelegramError && /not modified/i.test(e.description)) return;
       throw e;
     }
   }

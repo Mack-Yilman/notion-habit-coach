@@ -3,20 +3,20 @@
 import {
   coachData,
   fetchDay,
+  enviarTarjetas,
   fetchRange,
   getMsgContext,
   getSchema,
   loadStats,
   matricesFor,
-  saveMsgContext,
   type App,
 } from './app';
 import { decodeCallback } from './callback';
 import { buildHistorial, coachChat, coachCierre, coachSemana, type ChatTurn } from './coach';
-import { ESTADO_BY_KEY, type EstadoKey } from './config';
+import { ESTADO_BY_KEY } from './config';
 import { estadoProperty, isPending, parseEntry, type Entry } from './habits';
 import { clearMatrices, senalesDe } from './matrix';
-import { AYUDA, renderHoy, renderLista, renderRachas } from './messages';
+import { AYUDA, LEYENDA, renderCard, renderRachas, renderResumenHoy } from './messages';
 import { recalcular } from './scheduler';
 import { addDays, formatCorto } from './time';
 import { esc } from './telegram';
@@ -80,19 +80,15 @@ async function onCallback(app: App, q: Update): Promise<void> {
     await app.tg.answerCallback(q.id);
     return;
   }
+  const messageId: number | undefined = q.message?.message_id;
   const cb = decodeCallback(q.data);
   if (!cb) {
-    await app.tg.answerCallback(q.id, 'Botón no válido');
+    // Botones de una versión anterior del bot: se quitan para que no confundan.
+    await app.tg.answerCallback(q.id, 'Este mensaje es de una versión anterior. Usa /pendientes.');
+    if (messageId) await app.tg.clearKeyboard(app.chatId, messageId);
     return;
   }
   const schema = await getSchema(app);
-  if (cb.kind === 'info') {
-    // Botón de número: recuerda qué hábito es esa fila de íconos.
-    const e = parseEntry(await app.notion.getPage(cb.pageId), schema);
-    const def = e.estado ? ESTADO_BY_KEY[e.estado] : ESTADO_BY_KEY.sin_iniciar;
-    await app.tg.answerCallback(q.id, `${e.nombre} · ${def.icon} ${def.label}`);
-    return;
-  }
   let marcado: Entry;
   try {
     marcado = parseEntry(await app.notion.updatePage(cb.pageId, estadoProperty(schema, cb.estado)), schema);
@@ -102,39 +98,40 @@ async function onCallback(app: App, q: Update): Promise<void> {
     return;
   }
   const def = ESTADO_BY_KEY[cb.estado];
-  await app.tg.answerCallback(q.id, `${def.icon} ${marcado.nombre}: ${def.label}`);
-
-  const messageId: number | undefined = q.message?.message_id;
+  await app.tg.answerCallback(q.id, cb.estado === 'sin_iniciar' ? `↩️ ${marcado.nombre}: sin registrar` : `${def.icon} ${def.label}`);
   if (!messageId) return;
+
   const ctx = await getMsgContext(app, messageId);
-  if (!ctx) return;
-  const filas = await fetchDay(app, schema, ctx.date);
-  // La consulta podría no reflejar aún el PATCH: se impone el estado recién guardado.
-  const entries = filas
-    .filter((e) => ctx.ids.includes(e.pageId))
-    .map((e) => (e.pageId.replace(/-/g, '') === cb.pageId ? { ...e, estado: cb.estado as EstadoKey } : e));
-  const r = ctx.kind === 'hoy' ? renderHoy(ctx.header, entries) : renderLista(ctx.header, entries, senalesDe(await matricesFor(app, entries)));
+  if (!ctx || ctx.pageId.replace(/-/g, '') !== cb.pageId) {
+    // Mensaje con lista de una versión anterior: solo se quitan sus botones.
+    await app.tg.clearKeyboard(app.chatId, messageId);
+    return;
+  }
+  // La respuesta del PATCH ya trae la página actualizada: no hace falta consultar de nuevo.
+  const senal = isPending(marcado) && marcado.habitId ? senalesDe(await matricesFor(app, [marcado]))[marcado.habitId] : undefined;
+  const r = renderCard(marcado, senal, ctx.header);
   await app.tg.edit(app.chatId, messageId, r.text, r.keyboard);
 }
 
 async function enviarHoy(app: App, soloPendientes: boolean): Promise<void> {
   const schema = await getSchema(app);
-  let hoy = await fetchDay(app, schema, app.now.date);
+  const hoy = await fetchDay(app, schema, app.now.date);
   if (!hoy.length) {
     await app.tg.send(app.chatId, 'No hay hábitos para hoy en Notion. ¿Están activas las plantillas recurrentes?');
     return;
   }
-  if (soloPendientes) {
-    hoy = hoy.filter(isPending);
-    if (!hoy.length) {
-      await app.tg.send(app.chatId, '🎉 No te queda nada pendiente hoy.');
-      return;
-    }
+  const pendientes = hoy.filter(isPending);
+  if (!pendientes.length) {
+    await app.tg.send(app.chatId, soloPendientes ? '🎉 No te queda nada pendiente hoy.' : renderResumenHoy(`<b>📋 Hoy</b> · ${formatCorto(app.now.date)}`, hoy));
+    return;
   }
-  const header = `<b>${soloPendientes ? '⏳ Pendientes' : '📋 Hoy'}</b> · ${formatCorto(app.now.date)}`;
-  const r = renderHoy(header, hoy);
-  const msg = await app.tg.send(app.chatId, r.text, r.keyboard);
-  await saveMsgContext(app, msg.message_id, { kind: 'hoy', header, date: app.now.date, ids: hoy.map((e) => e.pageId) });
+  const leyenda = `<i>${LEYENDA}</i>`;
+  if (soloPendientes) {
+    await enviarTarjetas(app, pendientes, `<b>⏳ Pendientes</b> · ${formatCorto(app.now.date)}\n${leyenda}`);
+    return;
+  }
+  await app.tg.send(app.chatId, renderResumenHoy(`<b>📋 Hoy</b> · ${formatCorto(app.now.date)}`, hoy));
+  await enviarTarjetas(app, pendientes, leyenda);
 }
 
 async function enviarRachas(app: App): Promise<void> {

@@ -1,10 +1,9 @@
 // Cron: decide qué bloque toca, envía avisos, cierre con coach y procesa rachas.
 
-import { getSchema, fetchDay, fetchRange, coachData, matricesFor, saveMsgContext, saveStatsSnapshot, type App } from './app';
+import { getSchema, fetchDay, fetchRange, coachData, enviarTarjetas, saveStatsSnapshot, type App } from './app';
 import { buildHistorial, coachCierre, coachSemana } from './coach';
 import { hasStreakProps, isPending, NOMBRE_PREFIX, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
-import { senalesDe } from './matrix';
-import { renderLista } from './messages';
+import { headerAviso, LEYENDA } from './messages';
 import { dueSlots, SLOTS, type SlotKey } from './schedule';
 import { closableUntil, INITIAL_STATE, outcomeFromEstado, processDays, type DayOutcome, type StreakState } from './streak';
 import { addDays, formatCorto } from './time';
@@ -47,20 +46,16 @@ export async function runSlot(app: App, slot: SlotKey): Promise<string> {
   if (def.tipo === 'cierre') return enviarCierre(app, hoy);
 
   const delBloque = hoy.filter((e) => def.rangos.includes(e.rango ?? 'dia'));
-  const pendientes = delBloque.filter(isPending);
-  if (!pendientes.length) return 'nada pendiente en este bloque';
+  if (!delBloque.some(isPending)) return 'nada pendiente en este bloque';
 
-  // Aprovecha el aviso para leer hasta 2 Matrices que falten en caché.
-  const matrices = await matricesFor(app, hoy, 2);
-  let header = `<b>${def.titulo}</b> · ${formatCorto(app.now.date)}\n${def.intro}`;
+  let header = headerAviso(`<b>${def.titulo}</b> · ${formatCorto(app.now.date)}`, def.intro);
   if (slot === 'manana') {
     const notas = await app.kv.get(notasKey(app.now.date));
     if (notas) header = `${notas}\n\n${header}`;
   }
-  const r = renderLista(header, pendientes, senalesDe(matrices));
-  const msg = await app.tg.send(app.chatId, r.text, r.keyboard);
-  await saveMsgContext(app, msg.message_id, { kind: 'lista', header, date: app.now.date, ids: pendientes.map((e) => e.pageId) });
-  return `aviso con ${pendientes.length} pendientes`;
+  // Aprovecha el aviso para leer hasta 2 Matrices que falten en caché.
+  const n = await enviarTarjetas(app, delBloque, header, 2);
+  return `aviso con ${n} pendientes`;
 }
 
 async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {
@@ -76,17 +71,12 @@ async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {
     texto = await coachCierre(app.llm, data);
   }
   const titulo = domingo ? '📊 Revisión semanal' : SLOTS.cierre.titulo;
-  const header = `<b>${titulo}</b> · ${formatCorto(app.now.date)}\n\n${texto}`;
   const pendientes = hoy.filter(isPending);
-  if (!pendientes.length) {
-    await app.tg.send(app.chatId, header);
-    return 'cierre sin pendientes';
-  }
-  // El cierre lleva botones para salvar lo que falta antes de las 03:00.
-  const r = renderLista(`${header}\n\n<b>Aún puedes registrar:</b>`, pendientes);
-  const msg = await app.tg.send(app.chatId, r.text, r.keyboard);
-  await saveMsgContext(app, msg.message_id, { kind: 'lista', header: `${header}\n\n<b>Aún puedes registrar:</b>`, date: app.now.date, ids: pendientes.map((e) => e.pageId) });
-  return `cierre con ${pendientes.length} pendientes`;
+  const pie = pendientes.length ? `\n\n<b>Aún puedes registrar (hasta las 03:00):</b>` : '';
+  await app.tg.send(app.chatId, `<b>${titulo}</b> · ${formatCorto(app.now.date)}\n\n${texto}${pie}`);
+  // Tarjetas silenciosas para salvar lo que falta antes del cierre de las 03:00.
+  const n = await enviarTarjetas(app, pendientes, `<i>${LEYENDA}</i>`);
+  return `cierre con ${n} pendientes`;
 }
 
 // ---------- Rachas ----------
