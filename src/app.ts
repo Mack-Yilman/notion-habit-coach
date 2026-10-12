@@ -131,20 +131,55 @@ export async function getMsgContext(app: App, messageId: number): Promise<MsgCon
   return ctx?.kind === 'habito' ? (ctx as MsgContext) : null;
 }
 
+// ---------- Tarjetas vivas en el chat ----------
+// Regla (pedida por el usuario): cada hábito tiene una sola tarjeta viva. Al enviar un
+// bloque se borran las tarjetas ya registradas, las que se reemplazan y las de días
+// anteriores; las pendientes que el bloque no repite se quedan para registrar tarde.
+
+export interface CardRef {
+  mid: number;
+  pageId: string;
+  date: string;
+}
+
+const CARDS_KEY = 'cards:activas';
+/** Telegram es una subrequest por mensaje borrado: tope por ejecución (lo demás, la próxima vez). */
+const MAX_BORRADOS = 20;
+
+/** Qué tarjetas borrar antes de enviar un bloque. Pura, para probarla. */
+export function tarjetasABorrar(cards: CardRef[], hoy: Entry[], fecha: string, reemplazar: Set<string>): CardRef[] {
+  const filas = new Map(hoy.map((e) => [e.pageId, e]));
+  return cards.filter((c) => {
+    if (c.date !== fecha) return true;
+    const e = filas.get(c.pageId);
+    return !e || !isPending(e) || reemplazar.has(c.pageId);
+  });
+}
+
 /**
- * Envía una tarjeta por cada hábito pendiente. Solo la primera lleva `header` y suena;
- * las demás llegan en silencio para no llenar de notificaciones.
+ * Envía una tarjeta por cada hábito pendiente de `aEnviar` y ordena el chat. `hoy` son
+ * todas las filas del día (para saber qué tarjetas viejas ya se registraron). Solo la
+ * primera tarjeta lleva `header` y suena; las demás llegan en silencio.
  */
-export async function enviarTarjetas(app: App, entries: Entry[], header?: string, leerMatrices = 0): Promise<number> {
-  const pendientes = sortEntries(entries.filter(isPending));
+export async function enviarTarjetas(app: App, hoy: Entry[], aEnviar: Entry[], header?: string, leerMatrices = 0): Promise<number> {
+  const pendientes = sortEntries(aEnviar.filter(isPending));
   if (!pendientes.length) return 0;
-  const senales = senalesDe(await matricesFor(app, entries, leerMatrices));
+
+  const cards = (await app.kv.get<CardRef[]>(CARDS_KEY, 'json')) ?? [];
+  const borrar = tarjetasABorrar(cards, hoy, app.now.date, new Set(pendientes.map((e) => e.pageId))).slice(0, MAX_BORRADOS);
+  for (const c of borrar) await app.tg.deleteMessage(app.chatId, c.mid);
+  const borradas = new Set(borrar.map((c) => c.mid));
+  const vivas = cards.filter((c) => !borradas.has(c.mid));
+
+  const senales = senalesDe(await matricesFor(app, hoy, leerMatrices));
   for (const [i, e] of pendientes.entries()) {
     const h = i === 0 ? header : undefined;
     const r = renderCard(e, e.habitId ? senales[e.habitId] : undefined, h);
     const msg = await app.tg.send(app.chatId, r.text, r.keyboard, { silent: i > 0 });
     await saveMsgContext(app, msg.message_id, { kind: 'habito', pageId: e.pageId, ...(h ? { header: h } : {}) });
+    vivas.push({ mid: msg.message_id, pageId: e.pageId, date: app.now.date });
   }
+  await app.kv.put(CARDS_KEY, JSON.stringify(vivas), { expirationTtl: 3 * 86400 });
   return pendientes.length;
 }
 

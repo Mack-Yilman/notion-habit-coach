@@ -54,7 +54,7 @@ export async function runSlot(app: App, slot: SlotKey): Promise<string> {
     if (notas) header = `${notas}\n\n${header}`;
   }
   // Aprovecha el aviso para leer hasta 2 Matrices que falten en caché.
-  const n = await enviarTarjetas(app, delBloque, header, 2);
+  const n = await enviarTarjetas(app, hoy, delBloque, header, 2);
   return `aviso con ${n} pendientes`;
 }
 
@@ -75,7 +75,7 @@ async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {
   const pie = pendientes.length ? `\n\n<b>Aún puedes registrar (hasta las 03:00):</b>` : '';
   await app.tg.send(app.chatId, `<b>${titulo}</b> · ${formatCorto(app.now.date)}\n\n${texto}${pie}`);
   // Tarjetas silenciosas para salvar lo que falta antes del cierre de las 03:00.
-  const n = await enviarTarjetas(app, pendientes, `<i>${LEYENDA}</i>`);
+  const n = await enviarTarjetas(app, hoy, pendientes, `<i>${LEYENDA}</i>`);
   return `cierre con ${n} pendientes`;
 }
 

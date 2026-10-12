@@ -59,6 +59,16 @@ export class Telegram {
     }
   }
 
+  /** Borra un mensaje del bot. Si ya no existe o pasaron más de 48 h, no es un error. */
+  async deleteMessage(chatId: string, messageId: number): Promise<void> {
+    try {
+      await this.call('deleteMessage', { chat_id: chatId, message_id: messageId });
+    } catch (e) {
+      if (e instanceof TelegramError) return;
+      throw e;
+    }
+  }
+
   /** Quita los botones de un mensaje (p. ej. uno de una versión anterior del bot). */
   async clearKeyboard(chatId: string, messageId: number): Promise<void> {
     try {

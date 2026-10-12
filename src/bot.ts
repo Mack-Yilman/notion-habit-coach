@@ -127,11 +127,11 @@ async function enviarHoy(app: App, soloPendientes: boolean): Promise<void> {
   }
   const leyenda = `<i>${LEYENDA}</i>`;
   if (soloPendientes) {
-    await enviarTarjetas(app, pendientes, `<b>⏳ Pendientes</b> · ${formatCorto(app.now.date)}\n${leyenda}`);
+    await enviarTarjetas(app, hoy, pendientes, `<b>⏳ Pendientes</b> · ${formatCorto(app.now.date)}\n${leyenda}`);
     return;
   }
   await app.tg.send(app.chatId, renderResumenHoy(`<b>📋 Hoy</b> · ${formatCorto(app.now.date)}`, hoy));
-  await enviarTarjetas(app, pendientes, leyenda);
+  await enviarTarjetas(app, hoy, pendientes, leyenda);
 }
 
 async function enviarRachas(app: App): Promise<void> {

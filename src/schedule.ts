@@ -38,8 +38,9 @@ export const SLOTS: Record<SlotKey, SlotDef> = {
   tarde: {
     tipo: 'aviso',
     titulo: '🌆 Bloque de la tarde',
-    intro: 'Lo que toca esta tarde:',
-    rangos: ['tarde'],
+    intro: 'Lo que toca esta tarde (y lo que aún falta de «durante el día»):',
+    // «Durante el día» se recuerda 3 veces: 06:30, 12:30 y 21:30.
+    rangos: ['tarde', 'dia'],
   },
   tarde_ultimo: {
     tipo: 'aviso',

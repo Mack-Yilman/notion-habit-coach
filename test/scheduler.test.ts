@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { App } from '../src/app';
 import { closeDays, recalcular, runScheduled } from '../src/scheduler';
+import { tarjetasABorrar } from '../src/app';
 import { DEFAULT_SCHEDULE } from '../src/schedule';
 import { localNow } from '../src/time';
 
@@ -60,6 +61,7 @@ function matches(filter: any, p: any): boolean {
 function fakeApp(nowUtc: string, rows: any[]) {
   const updates: { id: string; props: any }[] = [];
   const sent: { text: string; keyboard?: unknown; silent?: boolean }[] = [];
+  const deleted: number[] = [];
   const notion = {
     async getDataSource() {
       return {
@@ -103,13 +105,16 @@ function fakeApp(nowUtc: string, rows: any[]) {
         sent.push({ text, keyboard, silent: opts.silent });
         return { message_id: sent.length };
       },
+      async deleteMessage(_chat: string, mid: number) {
+        deleted.push(mid);
+      },
     } as any,
     now: localNow(new Date(nowUtc), 'America/Lima'),
     schedule: DEFAULT_SCHEDULE,
     chatId: '1',
     llm: async () => ({ content: 'ok', toolCalls: [], provider: 'openai-compatible' as const }),
   } satisfies App;
-  return { app, updates, sent, kv, rows };
+  return { app, updates, sent, deleted, kv, rows };
 }
 
 const num = (r: any, k: string) => r.properties[k].number;
@@ -225,5 +230,42 @@ describe('runScheduled', () => {
     const { app, sent } = fakeApp('2026-10-14T11:30:00Z', [row('a14', 'h-agua', 'Agua', '2026-10-14', '⚡ Hecho')]);
     await runScheduled(app);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe('agrupar tarjetas', () => {
+  it('tarjetasABorrar: registradas, reemplazadas y de otros días; deja las pendientes no repetidas', () => {
+    const hoy = [
+      { pageId: 'p-hecho', estado: 'hecho' },
+      { pageId: 'p-pend', estado: 'sin_iniciar' },
+      { pageId: 'p-repite', estado: 'sin_iniciar' },
+    ] as any[];
+    const cards = [
+      { mid: 1, pageId: 'p-hecho', date: '2026-10-14' },
+      { mid: 2, pageId: 'p-pend', date: '2026-10-14' },
+      { mid: 3, pageId: 'p-repite', date: '2026-10-14' },
+      { mid: 4, pageId: 'p-ayer', date: '2026-10-13' },
+    ];
+    const borrar = tarjetasABorrar(cards, hoy, '2026-10-14', new Set(['p-repite']));
+    expect(borrar.map((c) => c.mid)).toEqual([1, 3, 4]);
+  });
+
+  it('el aviso de la tarde borra la tarjeta de la mañana que repite y la ya registrada', async () => {
+    const rows = [
+      row('agua', 'h-agua', 'Agua', '2026-10-14', '⚪ Sin iniciar'),
+      row('gym', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar'),
+    ];
+    rows[0]!.properties['Rango horario'].select.name = '❇️ Durante el día';
+    rows[1]!.properties['Rango horario'].select.name = '🌆 12:00 a 17:59';
+    // 06:30 Lima: llega la tarjeta de Agua (durante el día)
+    const m = fakeApp('2026-10-14T11:30:00Z', rows);
+    await runScheduled(m.app);
+    expect(m.sent.map((s) => s.text.includes('Agua'))).toEqual([true]);
+    // 12:30 Lima, misma KV: Agua sigue pendiente → se reemplaza; llega también Gym
+    const t = fakeApp('2026-10-14T17:30:00Z', rows);
+    t.app.kv = m.app.kv;
+    await runScheduled(t.app);
+    expect(t.deleted).toEqual([1]);
+    expect(t.sent).toHaveLength(2);
   });
 });

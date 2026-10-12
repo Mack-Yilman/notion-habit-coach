@@ -38,11 +38,13 @@ Notion es la **única base de datos** del sistema. El Cloudflare Worker no almac
 
 Los avisos se programan en hora local según el bloque horario correspondiente. Solo se envía una notificación si existen hábitos pendientes en ese bloque específico.
 
+Para que el chat no se llene, **cada hábito tiene una sola tarjeta viva**: al llegar un bloque nuevo, el bot borra las tarjetas ya registradas, la anterior de un hábito que vuelve a recordar y las del día anterior. Las pendientes que el bloque no repite se quedan para que puedas registrarlas tarde.
+
 | Bloque / Slot | Hora local | Descripción |
 | --- | --- | --- |
 | `manana` | 06:30 | Mañana: incluye madrugada/Dormir, mañana y «durante el día». |
 | `manana_ultimo` | 10:30 | Último llamado de la mañana (pendientes de madrugada y mañana). |
-| `tarde` | 12:30 | Bloque de la tarde. |
+| `tarde` | 12:30 | Bloque de la tarde y lo que aún falta de «durante el día». |
 | `tarde_ultimo` | 16:30 | Último llamado de la tarde. |
 | `noche` | 18:30 | Bloque de la noche. |
 | `noche_ultimo` | 21:30 | Último llamado del día (noche + durante el día). |
