@@ -1,17 +1,35 @@
 // Cron: decide qué bloque toca, envía avisos, cierre con coach y procesa rachas.
 
-import { getSchema, fetchDay, fetchRange, coachData, enviarTarjetas, loadStats, matricesFor, saveStatsSnapshot, type App } from './app';
+import {
+  getSchema,
+  fetchDay,
+  fetchRange,
+  coachData,
+  enviarTarjetas,
+  fallosKey,
+  llmFallaKey,
+  loadStats,
+  matricesFor,
+  saveStatsSnapshot,
+  type App,
+} from './app';
 import { getCachedMatrices } from './matrix';
 import { buildHistorial, coachCierre, coachSemana } from './coach';
 import { hasStreakProps, isPending, NOMBRE_PREFIX, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
-import { headerAviso, LEYENDA } from './messages';
-import { dueSlots, SLOTS, type SlotKey } from './schedule';
+import { headerAviso, LEYENDA, renderMapa } from './messages';
+import { dueSlots, SLOTS, VENTANA_MIN, type SlotKey } from './schedule';
 import { closableUntil, INITIAL_STATE, outcomeFromEstado, processDays, type DayOutcome, type StreakState } from './streak';
 import { addDays, formatCorto } from './time';
 import { esc } from './telegram';
 
 const sentKey = (date: string, slot: SlotKey) => `sent:${date}:${slot}`;
 const notasKey = (date: string) => `notas:${date}`;
+const erroresKey = (date: string) => `errores:${date}`;
+const avisadosKey = (date: string) => `salud:avisados:${date}`;
+const filasKey = (date: string) => `salud:filas:${date}`;
+
+/** Sin filas de hoy en Notion: el bloque se reintenta, pero la alerta la da `revisarSalud`. */
+class SinFilasError extends Error {}
 
 export async function runScheduled(app: App): Promise<void> {
   const slots = dueSlots(app.now.minutes, app.schedule);
@@ -30,17 +48,88 @@ export async function runScheduled(app: App): Promise<void> {
     } catch (e) {
       console.error(JSON.stringify({ evento: 'slot_error', slot, error: String(e) }));
       await app.kv.delete(key);
+      if (!(e instanceof SinFilasError)) await registrarError(app, slot, String(e));
     }
   }
-  // En los ciclos sin aviso se aprovecha para leer las Matrices que falten (el 💡 de cada
-  // tarjeta), así no gastan subrequests de los avisos.
+  // En los ciclos sin aviso se revisa la salud del bot y se leen las Matrices que falten
+  // (el 💡 de cada tarjeta), así no gastan subrequests de los avisos.
   if (!trabajo) {
+    try {
+      await revisarSalud(app);
+    } catch (e) {
+      console.error(JSON.stringify({ evento: 'salud_error', error: String(e) }));
+    }
     try {
       await precalentarMatrices(app);
     } catch (e) {
       console.error(JSON.stringify({ evento: 'matrices_error', error: String(e) }));
     }
   }
+}
+
+async function registrarError(app: App, slot: SlotKey, error: string): Promise<void> {
+  const errores = (await app.kv.get<Record<string, string>>(erroresKey(app.now.date), 'json')) ?? {};
+  errores[slot] = error.slice(0, 300);
+  await app.kv.put(erroresKey(app.now.date), JSON.stringify(errores), { expirationTtl: 2 * 86400 });
+}
+
+// ---------- Alertas de salud ----------
+// Fallos que de otro modo pasarían en silencio. Cada alerta se envía una sola vez al día.
+
+/**
+ * Las alertas esperan a las 06:00: no despiertan de madrugada, y para entonces Notion ya creó
+ * las filas del día aunque la recurrencia no sea a las 00:00. Llegan antes del aviso de las 06:30.
+ */
+const SALUD_DESDE_MIN = 6 * 60;
+
+export async function revisarSalud(app: App): Promise<string[]> {
+  if (app.now.minutes < SALUD_DESDE_MIN) return [];
+  const fecha = app.now.date;
+  const avisados = new Set((await app.kv.get<string[]>(avisadosKey(fecha), 'json')) ?? []);
+  const alertas: { clave: string; texto: string }[] = [];
+
+  // 1. Bloques que fallaron en todos sus reintentos (su ventana ya pasó y no quedaron enviados).
+  //    Los de ayer también: la ventana del cierre de las 23:00 termina a medianoche.
+  const ayer = addDays(fecha, -1);
+  for (const dia of [ayer, fecha]) {
+    const errores = (await app.kv.get<Record<string, string>>(erroresKey(dia), 'json')) ?? {};
+    for (const [slot, error] of Object.entries(errores) as [SlotKey, string][]) {
+      const clave = dia === fecha ? slot : `${slot}:${dia}`;
+      if (avisados.has(clave) || (dia === fecha && app.now.minutes < app.schedule[slot] + VENTANA_MIN)) continue;
+      if ((await app.kv.get(sentKey(dia, slot))) === 'hecho') continue;
+      // Lo de ayer ya se avisó ayer si su ventana terminó antes de medianoche.
+      if (dia === ayer && app.schedule[slot] + VENTANA_MIN < 24 * 60) continue;
+      const que = slot === 'procesar' ? 'No pude cerrar las rachas de ayer' : `Falló el aviso «${SLOTS[slot].titulo}»`;
+      const extra = slot === 'procesar' ? ' Se reintentará mañana a las 03:00; también puedes usar /recalcular.' : '';
+      alertas.push({ clave, texto: `${que}: <code>${esc(error.slice(0, 200))}</code>.${extra}` });
+    }
+  }
+
+  // 2. Notion no creó las filas de hoy (recurrencias apagadas o plantillas borradas).
+  if (!(await app.kv.get(filasKey(fecha)))) {
+    const hoy = await fetchDay(app, await getSchema(app), fecha);
+    await app.kv.put(filasKey(fecha), hoy.length ? 'ok' : 'vacio', { expirationTtl: 2 * 86400 });
+    if (!hoy.length) {
+      alertas.push({
+        clave: 'filas',
+        texto: 'Notion no creó las filas de hoy. Revisa que las plantillas de tus hábitos tengan la <b>recurrencia diaria activada</b>.',
+      });
+    }
+  }
+
+  // 3. El LLM principal falló hoy (sin saldo, clave inválida o caída) y se usó el respaldo.
+  const llm = await app.kv.get(llmFallaKey(fecha));
+  if (llm && !avisados.has('llm')) {
+    const saldo = /\b402\b|insufficient|balance/i.test(llm) ? ' Parece falta de saldo: recarga tu cuenta de DeepSeek.' : '';
+    alertas.push({ clave: 'llm', texto: `El coach de IA falló y usé el respaldo: <code>${esc(llm.slice(0, 200))}</code>.${saldo}` });
+  }
+
+  const nuevas = alertas.filter((a) => !avisados.has(a.clave));
+  if (!nuevas.length) return [];
+  await app.tg.send(app.chatId, `🩺 <b>Revisión del bot</b>\n\n${nuevas.map((a) => `⚠️ ${a.texto}`).join('\n\n')}`);
+  for (const a of nuevas) avisados.add(a.clave);
+  await app.kv.put(avisadosKey(fecha), JSON.stringify([...avisados]), { expirationTtl: 2 * 86400 });
+  return nuevas.map((a) => a.clave);
 }
 
 const matricesOkKey = (date: string) => `matrices:ok:${date}`;
@@ -74,18 +163,23 @@ export async function runSlot(app: App, slot: SlotKey): Promise<string> {
 
   const schema = await getSchema(app);
   const hoy = await fetchDay(app, schema, app.now.date);
-  if (!hoy.length) return 'no hay filas de hoy en Notion';
+  // Se reintenta en el siguiente cron: Notion pudo tardar en crear las filas del día.
+  if (!hoy.length) throw new SinFilasError('no hay filas de hoy en Notion');
 
   if (def.tipo === 'cierre') return enviarCierre(app, hoy);
 
   const delBloque = hoy.filter((e) => def.rangos.includes(e.rango ?? 'dia'));
-  if (!delBloque.some(isPending)) return 'nada pendiente en este bloque';
-
-  let header = headerAviso(`<b>${def.titulo}</b> · ${formatCorto(app.now.date)}`, def.intro);
-  if (slot === 'manana') {
-    const notas = await app.kv.get(notasKey(app.now.date));
-    if (notas) header = `${notas}\n\n${header}`;
+  // Las notas del cierre de rachas (🧊, 💔, 🏅, 🎁) van en el aviso de la mañana.
+  const notas = slot === 'manana' ? await app.kv.get(notasKey(app.now.date)) : null;
+  const titulo = `<b>${def.titulo}</b> · ${formatCorto(app.now.date)}`;
+  if (!delBloque.some(isPending)) {
+    if (!notas) return 'nada pendiente en este bloque';
+    await app.tg.send(app.chatId, `${titulo}\n\n${notas}`);
+    return 'solo las notas del cierre de rachas';
   }
+
+  let header = headerAviso(titulo, def.intro);
+  if (notas) header = `${notas}\n\n${header}`;
 
   // Recordatorio inteligente: los últimos llamados solo suenan si hay una racha en riesgo.
   let silencioso = false;
@@ -120,18 +214,20 @@ async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {
   const data = await coachData(app, hoy);
   const domingo = app.now.weekday === 0;
   let texto: string;
+  let mapa = '';
   if (domingo) {
     const schema = await getSchema(app);
     const desde = addDays(app.now.date, -13);
     const hist = await fetchRange(app, schema, desde, app.now.date, 3);
     texto = await coachSemana(app.llm, data, buildHistorial(hist, desde, app.now.date));
+    mapa = renderMapa(hist, desde, app.now.date);
   } else {
     texto = await coachCierre(app.llm, data);
   }
   const titulo = domingo ? '📊 Revisión semanal' : SLOTS.cierre.titulo;
   const pendientes = hoy.filter(isPending);
   const pie = pendientes.length ? `\n\n<b>Aún puedes registrar (hasta las 03:00):</b>` : '';
-  await app.tg.send(app.chatId, `<b>${titulo}</b> · ${formatCorto(app.now.date)}\n\n${texto}${pie}`);
+  await app.tg.send(app.chatId, `<b>${titulo}</b> · ${formatCorto(app.now.date)}\n\n${texto}${mapa ? `\n\n${mapa}` : ''}${pie}`);
   // Tarjetas silenciosas para salvar lo que falta antes del cierre de las 03:00.
   const n = await enviarTarjetas(app, hoy, pendientes, `<i>${LEYENDA}</i>`);
   return `cierre con ${n} pendientes`;
@@ -154,8 +250,8 @@ function agrupar(entries: Entry[]): Map<string, Map<string, Entry>> {
 }
 
 const VENTANA = 14;
-/** Escrituras a Notion por ejecución (el plan gratuito permite 50 subrequests). */
-const MAX_ESCRITURAS = 36;
+/** Llamadas a Notion por ejecución del cierre (el plan gratuito permite 50 subrequests). */
+const MAX_LLAMADAS = 36;
 
 function estadoDeFila(e: Entry): StreakState {
   const s = e.streak!;
@@ -219,7 +315,9 @@ export async function closeDays(app: App): Promise<CloseResult> {
 
   const notas: string[] = [];
   const snapshot: Stats[] = [];
-  let escrituras = 0;
+  const fallos: string[] = [];
+  // Subrequests a Notion: escrituras y búsquedas de la última fila cerrada.
+  let llamadas = 0;
   let actualizados = 0;
   let incompleto = false;
 
@@ -228,9 +326,17 @@ export async function closeDays(app: App): Promise<CloseResult> {
     const nombre = esc(filas.get(fechas[fechas.length - 1]!)!.nombre);
     const cerrada = fechas.filter((f) => f <= hasta && filas.get(f)!.streak?.cerrada).pop();
     let prev: StreakState = cerrada ? estadoDeFila(filas.get(cerrada)!) : { ...INITIAL_STATE };
-    if (!cerrada && fechas[0]! === desde) {
-      // La ventana no tiene filas cerradas pero el hábito es más antiguo: busca la última.
+    if (!cerrada) {
+      // Sin filas cerradas en la ventana: puede ser nuevo, o antiguo y pausado (los días sin
+      // fila son neutros, así que conserva su racha). Se busca su última fila cerrada.
+      if (llamadas >= MAX_LLAMADAS) {
+        incompleto = true;
+        break;
+      }
+      llamadas++;
       prev = (await ultimaCerradaAntes(app, schema, habitId, filas.get(fechas[0]!)!.nombre, desde)) ?? prev;
+      // Los días entre esa fila y la ventana no se leen (solo existen si el Worker estuvo
+      // caído más de 14 días): se tratan como neutros.
       if (prev.procesadoHasta && prev.procesadoHasta < addDays(desde, -1)) prev.procesadoHasta = addDays(desde, -1);
     }
     const outcomeOf = (d: string): DayOutcome => {
@@ -243,13 +349,14 @@ export async function closeDays(app: App): Promise<CloseResult> {
     for (const ev of r.eventos) {
       const fila = filas.get(ev.date);
       if (!fila) continue; // día neutro: no hay fila que escribir
-      if (escrituras >= MAX_ESCRITURAS) {
+      if (llamadas >= MAX_LLAMADAS) {
         incompleto = true;
         break;
       }
       await app.notion.updatePage(fila.pageId, streakProperties(schema, ev.state, true));
-      escrituras++;
+      llamadas++;
       tocado = true;
+      if (ev.date === hasta && (ev.event === 'congelado' || ev.event === 'reinicio')) fallos.push(habitId);
       if (ev.event === 'congelado') notas.push(`🧊 «${nombre}» usó un congelador (${formatCorto(ev.date)}).`);
       if (ev.event === 'reinicio' && ev.antes > 0) notas.push(`💔 «${nombre}» perdió su racha de ${ev.antes} días.`);
       if (ev.ganoCongelador) notas.push(`🎁 «${nombre}» ganó un congelador por 7 días seguidos.`);
@@ -261,9 +368,9 @@ export async function closeDays(app: App): Promise<CloseResult> {
 
     // Sella la fila de hoy con la racha con la que empieza el día (para verla en Notion).
     const hoy = filas.get(app.now.date);
-    if (hoy && !hoy.streak?.cerrada && !mismoEstado(hoy.streak, r.state) && escrituras < MAX_ESCRITURAS) {
+    if (hoy && !hoy.streak?.cerrada && !mismoEstado(hoy.streak, r.state) && llamadas < MAX_LLAMADAS) {
       await app.notion.updatePage(hoy.pageId, streakProperties(schema, r.state, false));
-      escrituras++;
+      llamadas++;
       tocado = true;
     }
     if (tocado) actualizados++;
@@ -271,6 +378,12 @@ export async function closeDays(app: App): Promise<CloseResult> {
   }
 
   if (!incompleto && snapshot.length) await saveStatsSnapshot(app, snapshot);
+  if (fallos.length) {
+    // Se acumula: si el cierre se cortó, la siguiente ejecución agrega los que faltaban.
+    const key = fallosKey(addDays(hasta, 1));
+    const previos = (await app.kv.get<string[]>(key, 'json')) ?? [];
+    await app.kv.put(key, JSON.stringify([...new Set([...previos, ...fallos])]), { expirationTtl: 2 * 86400 });
+  }
   if (notas.length) {
     const previas = (await app.kv.get(notasKey(app.now.date))) ?? '';
     await app.kv.put(notasKey(app.now.date), [previas, ...notas].filter(Boolean).join('\n'), { expirationTtl: 2 * 86400 });
@@ -278,27 +391,69 @@ export async function closeDays(app: App): Promise<CloseResult> {
   return { actualizados, hasta, incompleto };
 }
 
-/** Rehace las rachas desde todo el historial y deja el resultado en la última fila de cada hábito. */
-export async function recalcular(app: App): Promise<{ habitos: number; hasta: string }> {
+/**
+ * Páginas de historial que lee /recalcular: ~800 filas (unos 3 meses con 9 hábitos). Cada
+ * fila pesa ~2,5 KB, y leer más arriesga los 10 ms de CPU del plan gratuito.
+ */
+const PAGINAS_RECALCULO = 8;
+/** Llamadas a Notion de /recalcular, sumando las páginas leídas (límite gratuito: 50). */
+const MAX_LLAMADAS_RECALCULO = 40;
+
+export interface RecalculoResult {
+  habitos: number;
+  total: number;
+  hasta: string;
+  /** Si el historial era más largo que lo leído: primer día recalculado. */
+  desde: string | null;
+  incompleto: boolean;
+}
+
+/**
+ * Rehace las rachas desde el historial y deja el resultado en la última fila cerrada y en la
+ * de hoy de cada hábito. Solo escribe lo que cambia, así que si se corta por el tope de
+ * llamadas, volver a ejecutarlo continúa donde quedó.
+ */
+export async function recalcular(app: App): Promise<RecalculoResult> {
   const hasta = closableUntil(app.now.date, app.now.minutes, app.schedule.procesar);
   const schema = await getSchema(app);
   if (!hasStreakProps(schema)) throw new Error('Faltan las columnas de racha en «Hábitos»: ejecuta node scripts/setup.mjs notion --aplicar');
-  // Hasta 15 páginas de 100 filas (~5 meses con 10 hábitos) sin pasar el límite de subrequests.
-  const porHabito = agrupar(await fetchRange(app, schema, null, app.now.date, 15));
+  const entries = await fetchRange(app, schema, null, app.now.date, PAGINAS_RECALCULO);
+  // Historial cortado: el día más antiguo leído puede estar incompleto. Cada hábito parte
+  // entonces de su primera fila cerrada posterior, en lugar de empezar de cero.
+  const corte = entries.length >= PAGINAS_RECALCULO * 100 ? entries.reduce((m, e) => (e.fecha! < m ? e.fecha! : m), app.now.date) : null;
+  const porHabito = agrupar(entries);
+  let llamadas = Math.ceil(entries.length / 100) + 1;
   const snapshot: Stats[] = [];
+  let incompleto = false;
+
+  const escribir = async (fila: Entry, st: StreakState, cerrada: boolean): Promise<boolean> => {
+    if (fila.streak?.cerrada === cerrada && mismoEstado(fila.streak, st)) return true;
+    if (llamadas >= MAX_LLAMADAS_RECALCULO) return false;
+    await app.notion.updatePage(fila.pageId, streakProperties(schema, st, cerrada));
+    llamadas++;
+    return true;
+  };
+
   for (const [habitId, filas] of porHabito) {
     const fechas = [...filas.keys()].sort();
     const outcomeOf = (d: string): DayOutcome => {
       const e = filas.get(d);
       return e ? outcomeFromEstado(e.estado ?? null) : 'none';
     };
-    const r = processDays({ ...INITIAL_STATE }, hasta, outcomeOf, fechas[0]!);
+    const base = corte ? fechas.find((f) => f > corte && f <= hasta && filas.get(f)!.streak?.cerrada) : undefined;
+    const prev = base ? estadoDeFila(filas.get(base)!) : { ...INITIAL_STATE };
+    const r = processDays(prev, hasta, outcomeOf, fechas[0]!);
     const ultimaFila = [...r.eventos].reverse().find((ev) => filas.has(ev.date));
-    if (ultimaFila) await app.notion.updatePage(filas.get(ultimaFila.date)!.pageId, streakProperties(schema, ultimaFila.state, true));
     const hoy = filas.get(app.now.date);
-    if (hoy) await app.notion.updatePage(hoy.pageId, streakProperties(schema, r.state, false));
+    if (
+      (ultimaFila && !(await escribir(filas.get(ultimaFila.date)!, ultimaFila.state, true))) ||
+      (hoy && !(await escribir(hoy, r.state, false)))
+    ) {
+      incompleto = true;
+      break;
+    }
     snapshot.push({ habitId, nombre: filas.get(fechas[fechas.length - 1]!)!.nombre, state: r.state });
   }
-  await saveStatsSnapshot(app, snapshot);
-  return { habitos: snapshot.length, hasta };
+  if (!incompleto) await saveStatsSnapshot(app, snapshot);
+  return { habitos: snapshot.length, total: porHabito.size, hasta, desde: corte, incompleto };
 }

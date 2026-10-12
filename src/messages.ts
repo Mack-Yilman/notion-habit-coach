@@ -9,6 +9,7 @@ import { encodeDeshacer, encodeEstado } from './callback';
 import { isPending, sortEntries, type Entry, type Stats } from './habits';
 import type { Keyboard } from './telegram';
 import { esc } from './telegram';
+import { dateRange, formatCorto } from './time';
 
 /** Niveles que se pueden registrar, en el orden del Protocolo (⚪ Sin iniciar se logra con ↩️). */
 const BOTONES: EstadoKey[] = ESTADOS.filter((e) => e.key !== 'sin_iniciar').map((e) => e.key);
@@ -43,14 +44,24 @@ export function etiquetaRango(e: Entry): string {
   return `${r.icon} ${r.label}${r.horas ? ` · ${r.horas}` : ''}`;
 }
 
-export function renderCard(e: Entry, senal?: string, header?: string): Rendered {
+/** Datos extra de una tarjeta pendiente. */
+export interface ExtrasCard {
+  /** El hábito falló ayer: «nunca falles dos veces». */
+  falloAyer?: boolean;
+  /** Versión mínima (nivel Parcial del Protocolo), para salvar el día. */
+  minima?: string;
+}
+
+export function renderCard(e: Entry, senal?: string, header?: string, extras: ExtrasCard = {}): Rendered {
   const obj = e.objetivo ? ` · ${esc(e.objetivo)}` : '';
   const rango = etiquetaRango(e);
   let cuerpo: string;
   if (isPending(e)) {
     const racha = e.streak && e.streak.racha > 0 ? ` · 🔥${e.streak.racha}` : '';
+    const minima = extras.minima ? `\n🕯️ Mínimo: <i>${esc(corto(extras.minima, MAX_SENAL))}</i>` : '';
+    const dosVeces = extras.falloAyer ? `\n⚠️ <i>Ayer no salió: no falles dos veces.</i>${minima}` : '';
     const s = senal ? `\n💡 <i>${esc(corto(senal, MAX_SENAL))}</i>` : '';
-    cuerpo = `<b>${esc(e.nombre)}</b>${obj}${racha}${s}`;
+    cuerpo = `<b>${esc(e.nombre)}</b>${obj}${racha}${dosVeces}${s}`;
   } else {
     const def = ESTADO_BY_KEY[e.estado!];
     cuerpo = `${def.icon} <b>${esc(e.nombre)}</b> · <i>${def.label}</i>`;
@@ -95,6 +106,32 @@ export function renderRachas(stats: Stats[]): string {
   const fecha = activos.map((s) => s.state.procesadoHasta).filter(Boolean).sort().pop();
   const pie = fecha ? `\n\n<i>Calculado hasta el ${fecha}. 🧊 = congeladores disponibles.</i>` : '';
   return `<b>🏆 Rachas</b>\n\n${lineas.join('\n')}${pie}`;
+}
+
+/**
+ * Mapa de los últimos días para /semana: una fila de íconos por hábito, en semanas de 7.
+ * ➖ = ese día el hábito no tenía fila (neutro para la racha).
+ */
+export function renderMapa(historial: Entry[], desde: string, hasta: string): string {
+  const dias = dateRange(desde, hasta);
+  const porHabito = new Map<string, { ultima: Entry; serie: Map<string, EstadoKey | null> }>();
+  for (const e of historial) {
+    if (!e.fecha) continue;
+    const k = e.habitId ?? e.nombre;
+    const h = porHabito.get(k) ?? { ultima: e, serie: new Map<string, EstadoKey | null>() };
+    if (e.fecha >= h.ultima.fecha!) h.ultima = e; // nombre y rango más recientes
+    h.serie.set(e.fecha, e.estado);
+    porHabito.set(k, h);
+  }
+  if (!porHabito.size) return '';
+  const lineas = sortEntries([...porHabito.values()].map((h) => h.ultima)).map((e) => {
+    const serie = porHabito.get(e.habitId ?? e.nombre)!.serie;
+    const iconos = dias.map((d) => (serie.has(d) ? ESTADO_BY_KEY[serie.get(d) ?? 'sin_iniciar'].icon : '➖'));
+    const semanas: string[] = [];
+    for (let i = 0; i < iconos.length; i += 7) semanas.push(iconos.slice(i, i + 7).join(''));
+    return `${semanas.join(' ')}  ${esc(e.nombre)}`;
+  });
+  return `<b>🗓️ Últimos ${dias.length} días</b> · ${formatCorto(desde)} → ${formatCorto(hasta)}\n${lineas.join('\n')}\n<i>➖ = sin fila ese día</i>`;
 }
 
 export const AYUDA = [

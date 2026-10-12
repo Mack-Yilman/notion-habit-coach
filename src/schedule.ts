@@ -99,11 +99,14 @@ export function parseSchedule(raw: string | undefined): Record<SlotKey, number> 
   return out;
 }
 
+/** Minutos durante los que un bloque se puede enviar o reintentar después de su hora. */
+export const VENTANA_MIN = 60;
+
 /**
  * Bloques cuya hora ya pasó hace menos de `windowMin` minutos. La ventana permite
  * recuperar un cron perdido; la deduplicación (no enviar dos veces) va aparte, en KV.
  */
-export function dueSlots(nowMinutes: number, schedule: Record<SlotKey, number>, windowMin = 60): SlotKey[] {
+export function dueSlots(nowMinutes: number, schedule: Record<SlotKey, number>, windowMin = VENTANA_MIN): SlotKey[] {
   return SLOT_KEYS.filter((k) => {
     const t = schedule[k];
     return nowMinutes >= t && nowMinutes < t + windowMin;
