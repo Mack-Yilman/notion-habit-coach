@@ -1,6 +1,7 @@
 // Cron: decide qué bloque toca, envía avisos, cierre con coach y procesa rachas.
 
-import { getSchema, fetchDay, fetchRange, coachData, enviarTarjetas, loadStats, saveStatsSnapshot, type App } from './app';
+import { getSchema, fetchDay, fetchRange, coachData, enviarTarjetas, loadStats, matricesFor, saveStatsSnapshot, type App } from './app';
+import { getCachedMatrices } from './matrix';
 import { buildHistorial, coachCierre, coachSemana } from './coach';
 import { hasStreakProps, isPending, NOMBRE_PREFIX, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
 import { headerAviso, LEYENDA } from './messages';
@@ -13,9 +14,12 @@ const sentKey = (date: string, slot: SlotKey) => `sent:${date}:${slot}`;
 const notasKey = (date: string) => `notas:${date}`;
 
 export async function runScheduled(app: App): Promise<void> {
-  for (const slot of dueSlots(app.now.minutes, app.schedule)) {
+  const slots = dueSlots(app.now.minutes, app.schedule);
+  let trabajo = false;
+  for (const slot of slots) {
     const key = sentKey(app.now.date, slot);
     if (await app.kv.get(key)) continue;
+    trabajo = true;
     // Candado: el cron es «al menos una vez»; evita que dos ejecuciones envíen el mismo aviso.
     // Si el bloque falla, el candado se borra y el siguiente cron lo reintenta.
     await app.kv.put(key, 'en_curso', { expirationTtl: 600 });
@@ -28,6 +32,35 @@ export async function runScheduled(app: App): Promise<void> {
       await app.kv.delete(key);
     }
   }
+  // En los ciclos sin aviso se aprovecha para leer las Matrices que falten (el 💡 de cada
+  // tarjeta), así no gastan subrequests de los avisos.
+  if (!trabajo) {
+    try {
+      await precalentarMatrices(app);
+    } catch (e) {
+      console.error(JSON.stringify({ evento: 'matrices_error', error: String(e) }));
+    }
+  }
+}
+
+const matricesOkKey = (date: string) => `matrices:ok:${date}`;
+
+/**
+ * Lee hasta `max` Matrices Atómicas que falten en caché para los hábitos de hoy. Cuando
+ * están todas, deja una marca del día y deja de consultar Notion hasta mañana.
+ */
+export async function precalentarMatrices(app: App, max = 3): Promise<number> {
+  if (await app.kv.get(matricesOkKey(app.now.date))) return 0;
+  const hoy = await fetchDay(app, await getSchema(app), app.now.date);
+  const ids = [...new Set(hoy.map((e) => e.habitId).filter((x): x is string => !!x))];
+  const antes = Object.keys(await getCachedMatrices(app.kv, ids)).length;
+  const ahora = Object.keys(await matricesFor(app, hoy, max)).length;
+  if (ahora >= ids.length && ids.length) await app.kv.put(matricesOkKey(app.now.date), '1', { expirationTtl: 2 * 86400 });
+  return ahora - antes;
+}
+
+export async function olvidarMatricesOk(app: App): Promise<void> {
+  await app.kv.delete(matricesOkKey(app.now.date));
 }
 
 export async function runSlot(app: App, slot: SlotKey): Promise<string> {

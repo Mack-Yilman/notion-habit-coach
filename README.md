@@ -4,7 +4,7 @@ Bot de Telegram con coach de IA que hace accionable tu plantilla Habit Tracker P
 
 ## Qué hace
 
-- **Avisos por bloque horario**: Notificaciones según tu momento del día (no por hora fija): cada hábito pendiente llega en su propio mensaje con la «Señal» de su Matriz Atómica y su racha.
+- **Avisos por bloque horario**: Notificaciones según tu momento del día (no por hora fija): cada hábito pendiente llega en su propio mensaje con su rango horario, la «Señal» (el disparador) de su Matriz Atómica y su racha.
 - **Registro rápido con botones**: cada hábito pendiente llega en su propio mensaje con 5 íconos, en el mismo orden que el Protocolo de la plantilla (solo el primer mensaje del bloque suena). Tocar un ícono guarda ese nivel en Notion y el mensaje queda registrado con un botón ↩️ para deshacer:
   - 💤 **Omitido**
   - 🕯️ **Parcial**

@@ -19,7 +19,7 @@ const entry = (over: Partial<Entry> = {}): Entry => ({
 describe('renderCard (un mensaje por hábito)', () => {
   it('pendiente: nombre, objetivo, racha y señal; escapa HTML', () => {
     const r = renderCard(entry({ nombre: 'A <b> & B', streak: { racha: 5, mejor: 5, congeladores: 2, cerrada: false } }), 'Al despertar de la siesta');
-    expect(r.text).toBe('<b>A &lt;b&gt; &amp; B</b> · 1 hora · 🔥5\n💡 <i>Al despertar de la siesta</i>');
+    expect(r.text).toBe('🌆 Tarde · 12:00 a 17:59\n<b>A &lt;b&gt; &amp; B</b> · 1 hora · 🔥5\n💡 <i>Al despertar de la siesta</i>');
   });
   it('pendiente: solo los 5 íconos en el orden del Protocolo, sin ⚪ ni ✅ ni números', () => {
     const kb = renderCard(entry()).keyboard;
@@ -29,8 +29,12 @@ describe('renderCard (un mensaje por hábito)', () => {
   });
   it('registrado: muestra el nivel y un único botón ↩️ para deshacer', () => {
     const r = renderCard(entry({ estado: 'hecho' }));
-    expect(r.text).toBe('⚡ <b>Ir al gimnasio</b> · <i>Hecho</i>');
+    expect(r.text).toBe('🌆 Tarde · 12:00 a 17:59\n⚡ <b>Ir al gimnasio</b> · <i>Hecho</i>');
     expect(r.keyboard).toEqual([[{ text: '↩️', callback_data: 'u:3f727351c36780aabbbb0123456789ab' }]]);
+  });
+  it('etiqueta de rango: «Durante el día» sin horario; sin rango, sin etiqueta', () => {
+    expect(renderCard(entry({ rango: 'dia' })).text.startsWith('❇️ Durante el día\n')).toBe(true);
+    expect(renderCard(entry({ rango: null })).text.startsWith('<b>')).toBe(true);
   });
   it('conserva la cabecera del aviso al editar', () => {
     const header = headerAviso('<b>🌆 Tarde</b>', 'Lo que toca:');

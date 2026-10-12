@@ -303,3 +303,18 @@ describe('recordatorio inteligente (últimos llamados)', () => {
     expect(sent[0]!.silent).toBeFalsy();
   });
 });
+
+describe('precarga de Matrices', () => {
+  it('en un ciclo sin aviso lee las que faltan y luego deja de consultar ese día', async () => {
+    // 14:00 Lima: no toca ningún bloque
+    const { app, kv } = fakeApp('2026-10-14T19:00:00Z', [row('g14', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar')]);
+    await runScheduled(app);
+    expect(kv.m.has('matrix:h-gym')).toBe(true);
+    expect(kv.m.get('matrices:ok:2026-10-14')).toBe('1');
+  });
+  it('no precarga en un ciclo con aviso (protege el límite de llamadas)', async () => {
+    const { app, kv } = fakeApp('2026-10-14T11:30:00Z', [row('g14', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar')]);
+    await runScheduled(app);
+    expect(kv.m.has('matrices:ok:2026-10-14')).toBe(false);
+  });
+});

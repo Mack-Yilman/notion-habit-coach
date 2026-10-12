@@ -17,7 +17,7 @@ import { ESTADO_BY_KEY } from './config';
 import { estadoProperty, isPending, parseEntry, type Entry } from './habits';
 import { clearMatrices, senalesDe } from './matrix';
 import { AYUDA, LEYENDA, renderCard, renderRachas, renderResumenHoy } from './messages';
-import { recalcular } from './scheduler';
+import { olvidarMatricesOk, recalcular } from './scheduler';
 import { addDays, formatCorto } from './time';
 import { esc } from './telegram';
 
@@ -127,11 +127,11 @@ async function enviarHoy(app: App, soloPendientes: boolean): Promise<void> {
   }
   const leyenda = `<i>${LEYENDA}</i>`;
   if (soloPendientes) {
-    await enviarTarjetas(app, hoy, pendientes, `<b>⏳ Pendientes</b> · ${formatCorto(app.now.date)}\n${leyenda}`);
+    await enviarTarjetas(app, hoy, pendientes, `<b>⏳ Pendientes</b> · ${formatCorto(app.now.date)}\n${leyenda}`, 2);
     return;
   }
   await app.tg.send(app.chatId, renderResumenHoy(`<b>📋 Hoy</b> · ${formatCorto(app.now.date)}`, hoy));
-  await enviarTarjetas(app, hoy, pendientes, leyenda);
+  await enviarTarjetas(app, hoy, pendientes, leyenda, 2);
 }
 
 async function enviarRachas(app: App): Promise<void> {
@@ -160,12 +160,13 @@ async function actualizar(app: App): Promise<void> {
   const schema = await getSchema(app, true);
   const hoy = await fetchDay(app, schema, app.now.date);
   await clearMatrices(app.kv, hoy.map((e) => e.habitId).filter((x): x is string => !!x));
+  await olvidarMatricesOk(app);
   const m = await matricesFor(app, hoy, 5);
   const total = new Set(hoy.map((e) => e.habitId).filter(Boolean)).size;
   await app.tg.send(
     app.chatId,
     `🔄 Esquema actualizado. Leí ${Object.keys(m).length} de ${total} Matrices Atómicas.` +
-      (Object.keys(m).length < total ? ' Las demás se leen en los próximos avisos (o repite /actualizar).' : ''),
+      (Object.keys(m).length < total ? ' Las demás se leen solas en los próximos minutos.' : ''),
   );
 }
 

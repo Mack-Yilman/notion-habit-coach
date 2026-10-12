@@ -144,7 +144,7 @@ export interface CardRef {
 
 const CARDS_KEY = 'cards:activas';
 /** Telegram es una subrequest por mensaje borrado: tope por ejecución (lo demás, la próxima vez). */
-const MAX_BORRADOS = 20;
+const MAX_BORRADOS = 15;
 
 /** Qué tarjetas borrar antes de enviar un bloque. Pura, para probarla. */
 export function tarjetasABorrar(cards: CardRef[], hoy: Entry[], fecha: string, reemplazar: Set<string>): CardRef[] {

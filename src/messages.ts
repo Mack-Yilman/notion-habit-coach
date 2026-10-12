@@ -36,8 +36,16 @@ export function keyboardCard(e: Entry): Keyboard {
  * Tarjeta de un hábito. `header` (título del bloque y leyenda) solo va en la primera
  * tarjeta de cada aviso y se conserva al editarla.
  */
+/** «🌆 Tarde · 12:00 a 17:59» o «❇️ Durante el día», como en la plantilla. */
+export function etiquetaRango(e: Entry): string {
+  if (!e.rango) return '';
+  const r = RANGO_BY_KEY[e.rango];
+  return `${r.icon} ${r.label}${r.horas ? ` · ${r.horas}` : ''}`;
+}
+
 export function renderCard(e: Entry, senal?: string, header?: string): Rendered {
   const obj = e.objetivo ? ` · ${esc(e.objetivo)}` : '';
+  const rango = etiquetaRango(e);
   let cuerpo: string;
   if (isPending(e)) {
     const racha = e.streak && e.streak.racha > 0 ? ` · 🔥${e.streak.racha}` : '';
@@ -47,6 +55,7 @@ export function renderCard(e: Entry, senal?: string, header?: string): Rendered 
     const def = ESTADO_BY_KEY[e.estado!];
     cuerpo = `${def.icon} <b>${esc(e.nombre)}</b> · <i>${def.label}</i>`;
   }
+  if (rango) cuerpo = `${rango}\n${cuerpo}`;
   return { text: header ? `${header}\n\n${cuerpo}` : cuerpo, keyboard: keyboardCard(e) };
 }
 
