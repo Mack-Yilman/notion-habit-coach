@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { App } from '../src/app';
 import { closeDays, recalcular, runScheduled } from '../src/scheduler';
-import { tarjetasABorrar } from '../src/app';
+import { matricesFor, tarjetasABorrar } from '../src/app';
 import { DEFAULT_SCHEDULE } from '../src/schedule';
 import { localNow } from '../src/time';
 
@@ -316,5 +316,19 @@ describe('precarga de Matrices', () => {
     const { app, kv } = fakeApp('2026-10-14T11:30:00Z', [row('g14', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar')]);
     await runScheduled(app);
     expect(kv.m.has('matrices:ok:2026-10-14')).toBe(false);
+  });
+});
+
+describe('prioridad de Matrices', () => {
+  it('lee primero la Matriz de las tarjetas que se van a mostrar, sin repetir hábitos', async () => {
+    const { app } = fakeApp('2026-10-14T19:00:00Z', []);
+    const leidas: string[] = [];
+    app.notion.children = async (id: string) => {
+      leidas.push(id);
+      return [];
+    };
+    const e = (pageId: string, habitId: string) => ({ pageId, habitId, nombre: pageId, estado: null, fecha: '2026-10-14', rango: null, objetivo: '', identidad: '' });
+    await matricesFor(app, [e('p-noche', 'h-noche'), e('p-gym', 'h-gym'), e('p-noche', 'h-noche')], 1);
+    expect(leidas).toEqual(['p-noche']);
   });
 });

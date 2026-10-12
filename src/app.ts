@@ -97,13 +97,23 @@ export async function loadStats(app: App, entries: Entry[]): Promise<Record<stri
 
 // ---------- Matrices ----------
 
+/**
+ * Matrices de los hábitos de `entries`: las de caché y hasta `refreshMax` leídas de Notion.
+ * Se leen en el orden de `entries`, así que el llamador pone primero las que va a mostrar.
+ */
 export async function matricesFor(app: App, entries: Entry[], refreshMax = 0): Promise<Record<string, Matrix>> {
   const ids = entries.map((e) => e.habitId).filter((x): x is string => !!x);
   const cached = await getCachedMatrices(app.kv, ids);
   if (!refreshMax) return cached;
-  const samples = entries.filter((e) => e.habitId).map((e) => ({ habitId: e.habitId!, pageId: e.pageId }));
+  const vistos = new Set<string>();
+  const samples = entries
+    .filter((e) => e.habitId && !vistos.has(e.habitId) && vistos.add(e.habitId))
+    .map((e) => ({ habitId: e.habitId!, pageId: e.pageId }));
   return refreshMatrices(app.kv, app.notion, samples, cached, refreshMax);
 }
+
+/** Cuántas Matrices leer de una vez en un comando (~6 llamadas a Notion cada una; límite 50). */
+export const MATRICES_POR_COMANDO = 4;
 
 export async function coachData(app: App, entries: Entry[], date = app.now.date): Promise<CoachData> {
   const [stats, matrices] = await Promise.all([loadStats(app, entries), matricesFor(app, entries)]);
@@ -179,7 +189,8 @@ export async function enviarTarjetas(
   const borradas = new Set(borrar.map((c) => c.mid));
   const vivas = cards.filter((c) => !borradas.has(c.mid));
 
-  const senales = senalesDe(await matricesFor(app, hoy, leerMatrices));
+  // Primero las tarjetas que se van a enviar: así su 💡 Señal sale aunque falten otras.
+  const senales = senalesDe(await matricesFor(app, [...pendientes, ...hoy], leerMatrices));
   for (const [i, e] of pendientes.entries()) {
     const h = i === 0 ? header : undefined;
     const r = renderCard(e, e.habitId ? senales[e.habitId] : undefined, h);

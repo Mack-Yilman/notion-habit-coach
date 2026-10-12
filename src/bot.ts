@@ -4,6 +4,7 @@ import {
   coachData,
   fetchDay,
   enviarTarjetas,
+  MATRICES_POR_COMANDO,
   fetchRange,
   getMsgContext,
   getSchema,
@@ -127,11 +128,11 @@ async function enviarHoy(app: App, soloPendientes: boolean): Promise<void> {
   }
   const leyenda = `<i>${LEYENDA}</i>`;
   if (soloPendientes) {
-    await enviarTarjetas(app, hoy, pendientes, `<b>⏳ Pendientes</b> · ${formatCorto(app.now.date)}\n${leyenda}`, 2);
+    await enviarTarjetas(app, hoy, pendientes, `<b>⏳ Pendientes</b> · ${formatCorto(app.now.date)}\n${leyenda}`, MATRICES_POR_COMANDO);
     return;
   }
   await app.tg.send(app.chatId, renderResumenHoy(`<b>📋 Hoy</b> · ${formatCorto(app.now.date)}`, hoy));
-  await enviarTarjetas(app, hoy, pendientes, leyenda, 2);
+  await enviarTarjetas(app, hoy, pendientes, leyenda, MATRICES_POR_COMANDO);
 }
 
 async function enviarRachas(app: App): Promise<void> {
@@ -161,7 +162,8 @@ async function actualizar(app: App): Promise<void> {
   const hoy = await fetchDay(app, schema, app.now.date);
   await clearMatrices(app.kv, hoy.map((e) => e.habitId).filter((x): x is string => !!x));
   await olvidarMatricesOk(app);
-  const m = await matricesFor(app, hoy, 5);
+  // Primero las de los pendientes (son las que se ven en las tarjetas).
+  const m = await matricesFor(app, [...hoy.filter(isPending), ...hoy], 6);
   const total = new Set(hoy.map((e) => e.habitId).filter(Boolean)).size;
   await app.tg.send(
     app.chatId,

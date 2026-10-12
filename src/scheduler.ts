@@ -54,7 +54,7 @@ export async function precalentarMatrices(app: App, max = 3): Promise<number> {
   const hoy = await fetchDay(app, await getSchema(app), app.now.date);
   const ids = [...new Set(hoy.map((e) => e.habitId).filter((x): x is string => !!x))];
   const antes = Object.keys(await getCachedMatrices(app.kv, ids)).length;
-  const ahora = Object.keys(await matricesFor(app, hoy, max)).length;
+  const ahora = Object.keys(await matricesFor(app, [...hoy.filter(isPending), ...hoy], max)).length;
   if (ahora >= ids.length && ids.length) await app.kv.put(matricesOkKey(app.now.date), '1', { expirationTtl: 2 * 86400 });
   return ahora - antes;
 }
