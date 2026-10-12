@@ -79,6 +79,10 @@ describe('parseEntry', () => {
     });
     expect(isPending(e)).toBe(true);
   });
+  it('sin relación Estadística agrupa por nombre', () => {
+    const e = parseEntry(page({ 'Estadística ': { type: 'relation', relation: [] } }), s);
+    expect(e.habitId).toBe('nombre:ir al gimnasio');
+  });
   it('una fila sin estado cuenta como pendiente', () => {
     const e = parseEntry(page({ Estado: { type: 'select', select: null } }), s);
     expect(e.estado).toBeNull();

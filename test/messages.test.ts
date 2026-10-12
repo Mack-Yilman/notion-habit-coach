@@ -34,16 +34,23 @@ describe('renderLista', () => {
 });
 
 describe('keyboardFor', () => {
-  it('una fila de 5 botones por hábito; el primero lleva el nombre', () => {
-    const kb = keyboardFor([entry()]);
-    expect(kb).toHaveLength(1);
-    expect(kb[0]).toHaveLength(5);
-    expect(kb[0]![0]!.text).toBe('⚡ Ir al gimnasio');
-    expect(kb[0]![0]!.callback_data).toBe('e:3f727351c36780aabbbb0123456789ab:h');
+  it('solo íconos: número + los 6 estados en el orden de la plantilla', () => {
+    const kb = keyboardFor([entry({ estado: null }), entry({ pageId: '3f727351-c367-80aa-bbbb-0123456789ac', estado: null })]);
+    expect(kb).toHaveLength(2);
+    expect(kb[0]!.map((b) => b.text)).toEqual(['1️⃣', '⚪', '💤', '🕯️', '⚡', '🔥', '🚀']);
+    expect(kb[1]![0]!.text).toBe('2️⃣');
+    expect(kb[0]![0]!.callback_data).toBe('i:3f727351c36780aabbbb0123456789ab');
+    expect(kb[0]![4]!.callback_data).toBe('e:3f727351c36780aabbbb0123456789ab:h');
   });
   it('marca con ✅ el estado actual', () => {
     const kb = keyboardFor([entry({ estado: 'parcial' })]);
-    expect(kb[0]![1]!.text).toBe('✅');
+    expect(kb[0]![3]!.text).toBe('✅');
+    expect(kb[0]![1]!.text).toBe('⚪');
+  });
+  it('el texto numera cada hábito igual que su fila de botones y explica los íconos', () => {
+    const r = renderLista('X', [entry({ nombre: 'B', rango: 'noche' }), entry({ nombre: 'A', rango: 'manana' })]);
+    expect(r.text).toMatch(/1️⃣ <b>A<\/b>[\s\S]*2️⃣ <b>B<\/b>/);
+    expect(r.text).toContain('⚪ Sin iniciar · 💤 Omitido · 🕯️ Parcial · ⚡ Hecho · 🔥 Superado · 🚀 Alto impacto');
   });
 });
 

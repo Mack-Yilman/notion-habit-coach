@@ -1,39 +1,51 @@
 // Textos fijos de los avisos (sin IA) y teclados de Telegram. Funciones puras.
 
-import { ESTADO_BY_KEY, RANGO_BY_KEY, type EstadoKey } from './config';
-import { encodeEstado } from './callback';
+import { ESTADOS, ESTADO_BY_KEY, RANGO_BY_KEY, type EstadoKey } from './config';
+import { encodeEstado, encodeInfo } from './callback';
 import { isPending, sortEntries, type Entry, type Stats } from './habits';
 import type { Keyboard } from './telegram';
 import { esc } from './telegram';
 
-const BOTONES: EstadoKey[] = ['hecho', 'parcial', 'superado', 'alto', 'omitido'];
+// Botones solo con íconos, en el mismo orden que el Protocolo de la plantilla de Notion.
+const BOTONES: EstadoKey[] = ESTADOS.map((e) => e.key);
 const MAX_SENAL = 160;
+const KEYCAPS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+
+/** Número del hábito en el mensaje: 1️⃣…🔟 y luego «11», «12»… */
+export function numero(i: number): string {
+  return KEYCAPS[i] ?? String(i + 1);
+}
+
+/** Leyenda de los botones, en el orden de la plantilla. */
+export const LEYENDA = ESTADOS.map((e) => `${e.icon} ${e.label}`).join(' · ');
 
 function corto(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s;
 }
 
-function lineaEntry(e: Entry, senal?: string): string {
+function lineaEntry(e: Entry, n: string, senal?: string): string {
   const def = e.estado ? ESTADO_BY_KEY[e.estado] : ESTADO_BY_KEY.sin_iniciar;
-  const obj = e.objetivo ? ` · ${esc(e.objetivo)}` : '';
   if (!isPending(e)) {
-    return `${def.icon} <s>${esc(e.nombre)}</s> · <i>${def.label}</i>`;
+    return `${n} <s>${esc(e.nombre)}</s> · ${def.icon} <i>${def.label}</i>`;
   }
+  const obj = e.objetivo ? ` · ${esc(e.objetivo)}` : '';
   const racha = e.streak && e.streak.racha > 0 ? ` · 🔥${e.streak.racha}` : '';
   const s = senal ? `\n    💡 <i>${esc(corto(senal, MAX_SENAL))}</i>` : '';
-  return `${def.icon} <b>${esc(e.nombre)}</b>${obj}${racha}${s}`;
+  return `${n} <b>${esc(e.nombre)}</b>${obj}${racha}${s}`;
 }
 
-/** Una fila de botones por hábito: [⚡ Nombre] [🕯️] [🔥] [🚀] [💤]. */
+/**
+ * Una fila por hábito: [1️⃣] [⚪] [💤] [🕯️] [⚡] [🔥] [🚀]. El número identifica el hábito
+ * (al tocarlo muestra su nombre) y el estado actual aparece como ✅.
+ */
 export function keyboardFor(entries: Entry[]): Keyboard {
-  return entries.map((e) =>
-    BOTONES.map((key, i) => {
-      const def = ESTADO_BY_KEY[key];
-      const marcado = e.estado === key ? '✅' : def.icon;
-      const text = i === 0 ? `${marcado} ${corto(e.nombre, 18)}` : marcado;
-      return { text, callback_data: encodeEstado(e.pageId, key) };
-    }),
-  );
+  return entries.map((e, i) => [
+    { text: numero(i), callback_data: encodeInfo(e.pageId) },
+    ...BOTONES.map((key) => ({
+      text: e.estado === key ? '✅' : ESTADO_BY_KEY[key].icon,
+      callback_data: encodeEstado(e.pageId, key),
+    })),
+  ]);
 }
 
 export interface Rendered {
@@ -44,12 +56,12 @@ export interface Rendered {
 /** Cabecera + lista de hábitos con botones. Se usa para avisos, /hoy y al editar tras un botón. */
 export function renderLista(header: string, entries: Entry[], senales: Record<string, string> = {}): Rendered {
   const ordenadas = sortEntries(entries);
-  const lineas = ordenadas.map((e) => lineaEntry(e, e.habitId ? senales[e.habitId] : undefined));
+  const lineas = ordenadas.map((e, i) => lineaEntry(e, numero(i), e.habitId ? senales[e.habitId] : undefined));
   const pendientes = ordenadas.filter(isPending).length;
   const pie =
     pendientes === 0
       ? '\n\n🎉 <b>¡Todo registrado en este bloque!</b>'
-      : '\n\n<i>Toca un botón para registrar. El primero marca ⚡ Hecho.</i>';
+      : `\n\n<i>Toca el nivel alcanzado en la fila de cada número:</i>\n<i>${LEYENDA}</i>`;
   return { text: `${header}\n\n${lineas.join('\n')}${pie}`, keyboard: keyboardFor(ordenadas) };
 }
 
@@ -58,17 +70,17 @@ export function renderHoy(header: string, entries: Entry[]): Rendered {
   const ordenadas = sortEntries(entries);
   const bloques: string[] = [];
   let actual: string | null = null;
-  for (const e of ordenadas) {
+  ordenadas.forEach((e, i) => {
     const r = e.rango ?? 'dia';
     if (r !== actual) {
       actual = r;
       bloques.push(`\n${RANGO_BY_KEY[r].icon} <b>${RANGO_BY_KEY[r].label}</b>`);
     }
-    bloques.push(lineaEntry(e));
-  }
+    bloques.push(lineaEntry(e, numero(i)));
+  });
   const hechos = ordenadas.filter((e) => !isPending(e)).length;
   return {
-    text: `${header} · ${hechos}/${ordenadas.length} registrados\n${bloques.join('\n')}`,
+    text: `${header} · ${hechos}/${ordenadas.length} registrados\n${bloques.join('\n')}\n\n<i>${LEYENDA}</i>`,
     keyboard: keyboardFor(ordenadas),
   };
 }

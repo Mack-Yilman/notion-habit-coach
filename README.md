@@ -5,12 +5,13 @@ Bot de Telegram con coach de IA que hace accionable tu plantilla Habit Tracker P
 ## Qué hace
 
 - **Avisos por bloque horario**: Notificaciones según tu momento del día (no por hora fija), con la lista de hábitos pendientes y la «Señal» de la Matriz Atómica asociada a cada uno.
-- **Registro rápido con botones**: Botones interactivos para marcar el estado directamente en Notion:
-  - ⚡ **Hecho**
+- **Registro rápido con botones**: cada hábito del aviso lleva un número (1️⃣, 2️⃣…) y una fila de íconos, en el mismo orden que el Protocolo de la plantilla. Tocar un ícono guarda ese estado en Notion; el actual aparece como ✅ y el número muestra el nombre del hábito:
+  - ⚪ **Sin iniciar** (para deshacer)
+  - 💤 **Omitido**
   - 🕯️ **Parcial**
+  - ⚡ **Hecho**
   - 🔥 **Superado**
   - 🚀 **Alto impacto**
-  - 💤 **Omitido**
 - **Rachas inteligentes**: Sistema de rachas con 2 congeladores por hábito para proteger tu constancia ante imprevistos.
 - **Coach de IA**: Cierre diario nocturno, revisión semanal los domingos y modo de chat libre que comprende lenguaje natural y puede registrar hábitos automáticamente (por ejemplo: «ya fui al gym»).
 
@@ -76,15 +77,20 @@ Los avisos se programan en hora local según el bloque horario correspondiente. 
 ## Instalación paso a paso
 
 ### 1) Duplicar la plantilla de Notion
-Duplica la plantilla «Habit Tracker Pro» de Mack Chirinos en tu cuenta de Notion (el enlace público se publicará pronto en este repositorio; mientras tanto, pídelo abriendo un *issue*).
+
+Abre la plantilla **[Habit Tracker Pro](https://mack-yilman.notion.site/Habit-Tracker-Pro-Template-3f727351c3678036852dca043ff7b017)** de Mack Chirinos y pulsa **Duplicar** (arriba a la derecha) para copiarla a tu Notion.
+
+La copia trae los hábitos de ejemplo con la **repetición apagada**, para que no se creen filas antes de que elijas los tuyos. Antes de seguir, actívala en los hábitos que vayas a usar: ver [Activar recurrencias y agregar hábitos](#activar-recurrencias-y-agregar-hábitos).
 
 ### 2) Crear una integración interna de Notion
+
 1. Entra a [https://www.notion.so/profile/integrations](https://www.notion.so/profile/integrations).
 2. Crea una integración interna con las capacidades de: **leer**, **actualizar** e **insertar contenido**.
 3. Copia el token secreto de la integración.
 4. Entra a tu página «Habit Tracker Pro» en Notion, haz clic en el menú superior (**•••**) → **Conexiones** y añade tu integración.
 
 ### 3) Crear el bot con @BotFather
+
 1. Inicia una conversación con [@BotFather](https://t.me/BotFather) en Telegram.
 2. Envía el comando `/newbot`.
 3. Escribe un nombre para el bot y luego un usuario único terminado en `bot` (por ejemplo: `mi_habit_coach_bot`).
@@ -92,11 +98,13 @@ Duplica la plantilla «Habit Tracker Pro» de Mack Chirinos en tu cuenta de Noti
 5. *(Recomendado)* Configura su descripción con `/setdescription` y su imagen con `/setuserpic`.
 
 ### 4) Obtener la clave de DeepSeek (opcional)
+
 1. Crea una cuenta en [https://platform.deepseek.com](https://platform.deepseek.com).
 2. Ve a la sección **API keys**, crea una clave nueva y recarga saldo ($2 es suficiente).
 3. *(Opcional)* Si no agregas clave, el bot usará Workers AI de forma gratuita.
 
 ### 5) Descargar el proyecto e instalar dependencias
+
 Clona el repositorio e instala los paquetes del proyecto:
 
 ```bash
@@ -106,6 +114,7 @@ npm install
 ```
 
 ### 6) Configurar variables de entorno y secretos
+
 Copia el archivo de variables de ejemplo:
 
 ```bash
@@ -113,6 +122,7 @@ cp .dev.vars.example .dev.vars
 ```
 
 Edita `.dev.vars` y completa las siguientes variables:
+
 - `NOTION_TOKEN`: Token de tu integración interna de Notion.
 - `TELEGRAM_BOT_TOKEN`: Token de tu bot de @BotFather.
 - `TELEGRAM_WEBHOOK_SECRET`: Texto largo y aleatorio para validar el webhook (solo letras, números, `_` y `-`). Puedes generarlo con `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
@@ -121,6 +131,7 @@ Edita `.dev.vars` y completa las siguientes variables:
 - `TELEGRAM_CHAT_ID`: Se obtiene en el siguiente paso.
 
 ### 7) Conectar Notion y preparar propiedades
+
 Verifica la conexión con Notion y detecta las fuentes de datos:
 
 ```bash
@@ -136,6 +147,7 @@ node scripts/setup.mjs notion --aplicar
 ```
 
 ### 8) Obtener tu Chat ID de Telegram
+
 1. Ejecuta en tu terminal:
 
 ```bash
@@ -146,6 +158,7 @@ node scripts/setup.mjs chat-id
 3. El script mostrará tu ID de chat. Cópialo y colócalo en `.dev.vars` como `TELEGRAM_CHAT_ID`.
 
 ### 9) Configurar Cloudflare y KV
+
 Inicia sesión en Cloudflare:
 
 ```bash
@@ -169,6 +182,7 @@ Pega el `id` obtenido en `wrangler.jsonc` dentro de `kv_namespaces`:
 Revisa la variable `TZ` en `wrangler.jsonc` (por defecto `America/Lima`) y ajústala a tu zona horaria si es distinta.
 
 ### 10) Subir los secretos a Cloudflare
+
 Sube todos los secretos del archivo `.dev.vars` a Cloudflare de una sola vez:
 
 ```bash
@@ -178,6 +192,7 @@ npx wrangler secret bulk .dev.vars
 Este comando carga todos los secretos definidos en `.dev.vars` en tu Worker.
 
 ### 11) Desplegar el Worker
+
 Despliega tu Worker en Cloudflare:
 
 ```bash
@@ -187,6 +202,7 @@ npx wrangler deploy
 Al terminar, copia la URL generada: `https://notion-habit-coach.<tu-subdominio>.workers.dev`.
 
 ### 12) Registrar el webhook y comandos del bot
+
 Registra la URL de tu Worker y los comandos en Telegram:
 
 ```bash
@@ -194,7 +210,28 @@ node scripts/setup.mjs webhook --url https://notion-habit-coach.<tu-subdominio>.
 ```
 
 ### 13) Probar el bot
+
 Escribe `/hoy` en Telegram. El bot responderá con los hábitos de hoy y sus botones para marcar estado.
+
+## Activar recurrencias y agregar hábitos
+
+El bot no crea hábitos: lee las filas diarias que Notion genera con las **plantillas recurrentes** de la base «Hábitos». Cada hábito es una plantilla que se repite todos los días.
+
+**Activar un hábito de la plantilla**
+
+1. Abre la base **Hábitos** y pulsa la flecha **▾** junto a **Nuevo** para ver las plantillas.
+2. En el hábito que quieras usar: **•••** → **Repetir** → **Diariamente** (o los días que elijas) y guarda.
+3. Desde el día siguiente, a las 00:00, Notion crea su fila del día y el bot ya la incluye en los avisos.
+
+**Agregar un hábito nuevo**
+
+1. En el mismo menú de plantillas, en **New page** (la plantilla base): **•••** → **Duplicar**.
+2. En la copia, cambia el nombre y completa **Identidad**, **Objetivo** y **Rango horario** (el rango decide en qué aviso aparece: mañana, tarde, noche o durante el día).
+3. Llena la **Matriz Atómica** (la **Señal** aparece en los avisos con 💡) y el **Protocolo** (qué significa cada nivel). Déjalas dentro de un **bloque sincronizado**, como indica la plantilla base, para que tus cambios lleguen también a las filas ya creadas.
+4. Actívale la repetición: **•••** → **Repetir** → **Diariamente**.
+5. Opcional: enlaza su ficha de «Estadísticas» en la propiedad **Estadística**. Si no lo haces, el bot agrupa la racha por el nombre del hábito, así que no lo cambies después.
+
+Tras editar Matrices, envía `/actualizar` al bot para que las vuelva a leer.
 
 ## Comandos del bot
 
@@ -227,6 +264,7 @@ curl -H "x-admin-secret: TU_SECRETO" "https://<URL>/admin/run?slot=manana"
 ```
 
 Slots disponibles:
+
 - `manana`
 - `manana_ultimo`
 - `tarde`

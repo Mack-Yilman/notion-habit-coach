@@ -12,6 +12,7 @@ import {
   RANGOS,
   estadoFromName,
   findProp,
+  normalize,
   rangoFromName,
   type EstadoKey,
   type RangoKey,
@@ -117,19 +118,24 @@ function num(prop: Json): number | null {
   return typeof prop?.number === 'number' ? prop.number : null;
 }
 
+/** Prefijo del id de hábito cuando la fila no tiene la relación «Estadística». */
+export const NOMBRE_PREFIX = 'nombre:';
+
 export function parseEntry(page: Json, s: HabitosSchema): Entry {
   const pr = page.properties ?? {};
   const rel = s.relacion ? pr[s.relacion]?.relation : undefined;
   const racha = s.racha ? num(pr[s.racha]) : null;
+  const nombre = text(pr[s.titulo]);
   return {
     pageId: page.id,
-    nombre: text(pr[s.titulo]) || 'Sin nombre',
+    nombre: nombre || 'Sin nombre',
     estado: estadoFromName(text(pr[s.estado])),
     fecha: pr[s.fecha]?.date?.start?.slice(0, 10) ?? null,
     rango: s.rango ? rangoFromName(text(pr[s.rango])) : null,
     objetivo: s.objetivo ? text(pr[s.objetivo]) : '',
     identidad: s.identidad ? text(pr[s.identidad]) : '',
-    habitId: rel?.[0]?.id ?? null,
+    // Sin la relación (p. ej. un hábito nuevo cuya plantilla no la tiene) se agrupa por nombre.
+    habitId: rel?.[0]?.id ?? (nombre ? `${NOMBRE_PREFIX}${normalize(nombre)}` : null),
     streak:
       racha === null
         ? null

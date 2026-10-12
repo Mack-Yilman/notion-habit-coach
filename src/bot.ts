@@ -86,6 +86,13 @@ async function onCallback(app: App, q: Update): Promise<void> {
     return;
   }
   const schema = await getSchema(app);
+  if (cb.kind === 'info') {
+    // Botón de número: recuerda qué hábito es esa fila de íconos.
+    const e = parseEntry(await app.notion.getPage(cb.pageId), schema);
+    const def = e.estado ? ESTADO_BY_KEY[e.estado] : ESTADO_BY_KEY.sin_iniciar;
+    await app.tg.answerCallback(q.id, `${e.nombre} · ${def.icon} ${def.label}`);
+    return;
+  }
   let marcado: Entry;
   try {
     marcado = parseEntry(await app.notion.updatePage(cb.pageId, estadoProperty(schema, cb.estado)), schema);

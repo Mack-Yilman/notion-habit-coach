@@ -2,7 +2,7 @@
 
 import { getSchema, fetchDay, fetchRange, coachData, matricesFor, saveMsgContext, saveStatsSnapshot, type App } from './app';
 import { buildHistorial, coachCierre, coachSemana } from './coach';
-import { hasStreakProps, isPending, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
+import { hasStreakProps, isPending, NOMBRE_PREFIX, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
 import { senalesDe } from './matrix';
 import { renderLista } from './messages';
 import { dueSlots, SLOTS, type SlotKey } from './schedule';
@@ -119,14 +119,27 @@ function mismoEstado(a: Entry['streak'], b: StreakState): boolean {
 }
 
 /** Última fila cerrada de un hábito antes de `desde` (solo si la ventana no tiene ninguna). */
-async function ultimaCerradaAntes(app: App, schema: HabitosSchema, habitId: string, desde: string): Promise<StreakState | null> {
-  if (!schema.relacion || !schema.cerrada) return null;
+async function ultimaCerradaAntes(
+  app: App,
+  schema: HabitosSchema,
+  habitId: string,
+  nombre: string,
+  desde: string,
+): Promise<StreakState | null> {
+  if (!schema.cerrada) return null;
+  // Hábitos sin relación «Estadística» se agrupan por nombre (ver parseEntry).
+  const delHabito = habitId.startsWith(NOMBRE_PREFIX)
+    ? { property: schema.titulo, title: { equals: nombre } }
+    : schema.relacion
+      ? { property: schema.relacion, relation: { contains: habitId } }
+      : null;
+  if (!delHabito) return null;
   const pages = await app.notion.queryAll(
     schema.dataSourceId,
     {
       filter: {
         and: [
-          { property: schema.relacion, relation: { contains: habitId } },
+          delHabito,
           { property: schema.cerrada, checkbox: { equals: true } },
           { property: schema.fecha, date: { before: desde } },
         ],
@@ -169,7 +182,7 @@ export async function closeDays(app: App): Promise<CloseResult> {
     let prev: StreakState = cerrada ? estadoDeFila(filas.get(cerrada)!) : { ...INITIAL_STATE };
     if (!cerrada && fechas[0]! === desde) {
       // La ventana no tiene filas cerradas pero el hábito es más antiguo: busca la última.
-      prev = (await ultimaCerradaAntes(app, schema, habitId, desde)) ?? prev;
+      prev = (await ultimaCerradaAntes(app, schema, habitId, filas.get(fechas[0]!)!.nombre, desde)) ?? prev;
       if (prev.procesadoHasta && prev.procesadoHasta < addDays(desde, -1)) prev.procesadoHasta = addDays(desde, -1);
     }
     const outcomeOf = (d: string): DayOutcome => {
