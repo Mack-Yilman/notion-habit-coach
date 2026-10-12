@@ -161,7 +161,15 @@ export function tarjetasABorrar(cards: CardRef[], hoy: Entry[], fecha: string, r
  * todas las filas del día (para saber qué tarjetas viejas ya se registraron). Solo la
  * primera tarjeta lleva `header` y suena; las demás llegan en silencio.
  */
-export async function enviarTarjetas(app: App, hoy: Entry[], aEnviar: Entry[], header?: string, leerMatrices = 0): Promise<number> {
+export async function enviarTarjetas(
+  app: App,
+  hoy: Entry[],
+  aEnviar: Entry[],
+  header?: string,
+  leerMatrices = 0,
+  /** true: ni la primera tarjeta suena (recordatorio inteligente sin racha en riesgo). */
+  silencioso = false,
+): Promise<number> {
   const pendientes = sortEntries(aEnviar.filter(isPending));
   if (!pendientes.length) return 0;
 
@@ -175,7 +183,7 @@ export async function enviarTarjetas(app: App, hoy: Entry[], aEnviar: Entry[], h
   for (const [i, e] of pendientes.entries()) {
     const h = i === 0 ? header : undefined;
     const r = renderCard(e, e.habitId ? senales[e.habitId] : undefined, h);
-    const msg = await app.tg.send(app.chatId, r.text, r.keyboard, { silent: i > 0 });
+    const msg = await app.tg.send(app.chatId, r.text, r.keyboard, { silent: silencioso || i > 0 });
     await saveMsgContext(app, msg.message_id, { kind: 'habito', pageId: e.pageId, ...(h ? { header: h } : {}) });
     vivas.push({ mid: msg.message_id, pageId: e.pageId, date: app.now.date });
   }

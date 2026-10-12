@@ -1,6 +1,6 @@
 // Cron: decide qué bloque toca, envía avisos, cierre con coach y procesa rachas.
 
-import { getSchema, fetchDay, fetchRange, coachData, enviarTarjetas, saveStatsSnapshot, type App } from './app';
+import { getSchema, fetchDay, fetchRange, coachData, enviarTarjetas, loadStats, saveStatsSnapshot, type App } from './app';
 import { buildHistorial, coachCierre, coachSemana } from './coach';
 import { hasStreakProps, isPending, NOMBRE_PREFIX, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
 import { headerAviso, LEYENDA } from './messages';
@@ -53,9 +53,34 @@ export async function runSlot(app: App, slot: SlotKey): Promise<string> {
     const notas = await app.kv.get(notasKey(app.now.date));
     if (notas) header = `${notas}\n\n${header}`;
   }
+
+  // Recordatorio inteligente: los últimos llamados solo suenan si hay una racha en riesgo.
+  let silencioso = false;
+  if (def.ultimo) {
+    const riesgo = enRiesgo(delBloque, await loadStats(app, hoy));
+    silencioso = riesgo.length === 0;
+    if (riesgo.length) header = `${lineaRiesgo(riesgo)}\n\n${header}`;
+  }
   // Aprovecha el aviso para leer hasta 2 Matrices que falten en caché.
-  const n = await enviarTarjetas(app, hoy, delBloque, header, 2);
-  return `aviso con ${n} pendientes`;
+  const n = await enviarTarjetas(app, hoy, delBloque, header, 2, silencioso);
+  return `aviso con ${n} pendientes${def.ultimo ? (silencioso ? ' (silencioso)' : ' (racha en riesgo)') : ''}`;
+}
+
+/**
+ * Pendientes que perderían su racha si no se hacen hoy: tienen racha y ya no les quedan
+ * congeladores. Si fallarlo no cuesta nada (racha 0 o queda un 🧊), no es riesgo.
+ */
+export function enRiesgo(entries: Entry[], stats: Record<string, Stats>): { nombre: string; racha: number }[] {
+  return entries
+    .filter(isPending)
+    .map((e) => ({ e, st: e.habitId ? stats[e.habitId]?.state : undefined }))
+    .filter(({ st }) => !!st && st.racha > 0 && st.congeladores === 0)
+    .map(({ e, st }) => ({ nombre: e.nombre, racha: st!.racha }));
+}
+
+export function lineaRiesgo(riesgo: { nombre: string; racha: number }[]): string {
+  const lista = riesgo.map((r) => `«${esc(r.nombre)}» (${r.racha} ${r.racha === 1 ? 'día' : 'días'})`).join(', ');
+  return `⚠️ <b>Racha en riesgo, sin 🧊:</b> ${lista}`;
 }
 
 async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {

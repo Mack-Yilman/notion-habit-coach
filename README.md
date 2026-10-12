@@ -40,6 +40,8 @@ Los avisos se programan en hora local según el bloque horario correspondiente. 
 
 Para que el chat no se llene, **cada hábito tiene una sola tarjeta viva**: al llegar un bloque nuevo, el bot borra las tarjetas ya registradas, la anterior de un hábito que vuelve a recordar y las del día anterior. Las pendientes que el bloque no repite se quedan para que puedas registrarlas tarde.
 
+**Recordatorio inteligente:** los avisos principales (06:30, 12:30 y 18:30) siempre suenan. Los **últimos llamados** (10:30, 16:30 y 21:30) llegan **en silencio** (sin sonido ni vibración) salvo que haya una racha en riesgo: un hábito pendiente con racha y sin congeladores, que la perdería si no lo haces hoy. En ese caso suenan y lo indican con ⚠️. Así el sonido siempre significa «esto importa».
+
 | Bloque / Slot | Hora local | Descripción |
 | --- | --- | --- |
 | `manana` | 06:30 | Mañana: incluye madrugada/Dormir, mañana y «durante el día». |

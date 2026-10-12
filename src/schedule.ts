@@ -18,6 +18,8 @@ export interface SlotDef {
   titulo: string;
   intro: string;
   rangos: RangoKey[];
+  /** Último llamado del bloque: solo suena si hay una racha en riesgo. */
+  ultimo?: boolean;
 }
 
 const TODOS: RangoKey[] = ['madrugada', 'manana', 'tarde', 'noche', 'dia'];
@@ -31,6 +33,7 @@ export const SLOTS: Record<SlotKey, SlotDef> = {
   },
   manana_ultimo: {
     tipo: 'aviso',
+    ultimo: true,
     titulo: '⏳ Último llamado de la mañana',
     intro: 'Queda poco del bloque de la mañana. Aún pendiente:',
     rangos: ['madrugada', 'manana'],
@@ -44,6 +47,7 @@ export const SLOTS: Record<SlotKey, SlotDef> = {
   },
   tarde_ultimo: {
     tipo: 'aviso',
+    ultimo: true,
     titulo: '⏳ Último llamado de la tarde',
     intro: 'Se acaba la tarde. Aún pendiente:',
     rangos: ['tarde'],
@@ -56,6 +60,7 @@ export const SLOTS: Record<SlotKey, SlotDef> = {
   },
   noche_ultimo: {
     tipo: 'aviso',
+    ultimo: true,
     titulo: '⏳ Último llamado del día',
     intro: 'Antes de cerrar el día, aún pendiente:',
     rangos: ['noche', 'dia'],

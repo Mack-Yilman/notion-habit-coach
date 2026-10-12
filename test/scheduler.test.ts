@@ -269,3 +269,37 @@ describe('agrupar tarjetas', () => {
     expect(t.sent).toHaveLength(2);
   });
 });
+
+describe('recordatorio inteligente (últimos llamados)', () => {
+  // 2026-10-14 10:30 en Lima = 15:30 UTC → toca manana_ultimo
+  const ULTIMO = '2026-10-14T15:30:00Z';
+  const conRacha = (r: number, c: number) => [row('g14', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar', { r, c, cerrada: false })];
+
+  it('llega en silencio si fallarlo no cuesta la racha (racha 0)', async () => {
+    const { app, sent } = fakeApp(ULTIMO, conRacha(0, 2));
+    await runScheduled(app);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.silent).toBe(true);
+  });
+
+  it('llega en silencio si aún queda un congelador', async () => {
+    const { app, sent } = fakeApp(ULTIMO, conRacha(12, 1));
+    await runScheduled(app);
+    expect(sent[0]!.silent).toBe(true);
+    expect(sent[0]!.text).not.toContain('Racha en riesgo');
+  });
+
+  it('suena y lo avisa si hay racha y no quedan congeladores', async () => {
+    const { app, sent } = fakeApp(ULTIMO, conRacha(12, 0));
+    await runScheduled(app);
+    expect(sent[0]!.silent).toBeFalsy();
+    expect(sent[0]!.text).toContain('⚠️ <b>Racha en riesgo, sin 🧊:</b> «Gym» (12 días)');
+  });
+
+  it('los avisos principales siempre suenan', async () => {
+    // 06:30 Lima, racha 0
+    const { app, sent } = fakeApp('2026-10-14T11:30:00Z', conRacha(0, 2));
+    await runScheduled(app);
+    expect(sent[0]!.silent).toBeFalsy();
+  });
+});
