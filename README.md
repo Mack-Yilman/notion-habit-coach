@@ -12,7 +12,9 @@ Bot de Telegram con coach de IA que hace accionable tu plantilla Habit Tracker P
   - 🔥 **Superado**
   - 🚀 **Alto impacto**
 - **Rachas inteligentes**: Sistema de rachas con 2 congeladores por hábito para proteger tu constancia ante imprevistos.
-- **Coach de IA**: Cierre diario nocturno, revisión semanal los domingos y modo de chat libre que comprende lenguaje natural y puede registrar hábitos automáticamente (por ejemplo: «ya fui al gym»).
+- **Nunca falles dos veces**: si un hábito falló ayer, su tarjeta de hoy lo marca con «⚠️ Ayer no salió: no falles dos veces» y te propone su versión mínima (el nivel 🕯️ Parcial de su Protocolo), para no encadenar dos fallos.
+- **Coach de IA**: Cierre diario nocturno, revisión semanal los domingos (con un mapa de 14 días en emojis) y modo de chat libre que comprende lenguaje natural y puede registrar hábitos automáticamente (por ejemplo: «ya fui al gym»).
+- **Alertas de salud**: si algo falla en silencio, el bot te avisa una vez al día, desde las 06:00 para no despertarte, con «🩺 Revisión del bot»: un aviso o el cierre de rachas que falló en todos sus reintentos, Notion que no creó las filas de hoy (recurrencias apagadas) o el coach de IA que falló (por ejemplo, por falta de saldo).
 
 ## Cómo funciona
 
@@ -52,6 +54,8 @@ Para que el chat no se llene, **cada hábito tiene una sola tarjeta viva**: al l
 | `noche_ultimo` | 21:30 | Último llamado del día (noche + durante el día). |
 | `cierre` | 23:00 | Cierre con coach (los domingos incluye la revisión semanal). |
 | `procesar` | 03:00 | Procesa las rachas del día anterior (lo marcado de madrugada aún cuenta). |
+
+**De madrugada (00:00 a 03:00) el día anterior sigue abierto:** `/hoy` y `/pendientes` muestran también los «🌒 Pendientes de ayer», y en el chat puedes contarle al coach algo que hiciste ayer. A las 03:00 el día se cierra: los botones de un día cerrado ya no cambian nada (el bot te avisa y los quita). Las notas del cierre (🧊 congelador usado, 💔 racha perdida, 🏅 récord, 🎁 congelador ganado) llegan con el aviso de las 06:30, aunque no tengas pendientes de la mañana.
 
 ## Reglas de racha
 
@@ -246,12 +250,12 @@ Tras editar Matrices, envía `/actualizar` al bot para que las vuelva a leer.
 | `/pendientes` | Un mensaje con botones por cada hábito pendiente de hoy. |
 | `/rachas` | Muestra el estado de tus rachas y congeladores disponibles. |
 | `/resumen` | Solicita una intervención del coach de IA en el momento. |
-| `/semana` | Ejecuta la revisión semanal con el coach ahora mismo. |
-| `/recalcular` | Rehace las rachas completas desde el historial de Notion. |
+| `/semana` | Revisión de los últimos 14 días con el coach, más un mapa en emojis: una fila por hábito, en dos semanas de 7 (➖ = ese día no tenía fila). |
+| `/recalcular` | Rehace las rachas desde el historial de Notion (hasta unos 3 meses). Con muchos hábitos puede pedirte que lo envíes otra vez para terminar, por el límite del plan gratuito de Cloudflare. |
 | `/actualizar` | Vuelve a leer y actualizar las Matrices Atómicas en caché. |
 | `/ayuda` | Muestra la ayuda y lista de comandos disponibles. |
 
-Cualquier otro mensaje va al coach de IA. El coach entiende lenguaje natural y puede marcar hábitos automáticamente (por ejemplo: «ya fui al gym»). El chat libre tiene un límite máximo de 30 mensajes por día (configurable con `CHAT_DAILY_LIMIT`).
+Cualquier otro mensaje va al coach de IA. El coach entiende lenguaje natural y puede marcar hábitos automáticamente (por ejemplo: «ya fui al gym»); la tarjeta de ese hábito se actualiza sola. El chat libre tiene un límite máximo de 30 mensajes por día (configurable con `CHAT_DAILY_LIMIT`).
 
 ## Personalizar
 
@@ -261,6 +265,8 @@ Cualquier otro mensaje va al coach de IA. El coach entiende lenguaje natural y p
 - **Nuevos hábitos**: Agrega hábitos desde Notion mediante tu plantilla recurrente habitual; el bot los detecta de forma automática sin cambios en el código.
 
 ## Probar a mano
+
+Las pruebas automáticas (tipos y Vitest) corren en GitHub Actions en cada push a `main` y en cada PR. En tu computadora: `npm test` y `npx tsc --noEmit`.
 
 Puedes probar manualmente cualquier bloque horario enviando una petición con tu secreto administrativo:
 
@@ -287,6 +293,7 @@ Slots disponibles:
 | Error «object_not_found» de Notion. | La página no está compartida con la integración. | Entra en tu página «Habit Tracker Pro» en Notion, ve a ••• → **Conexiones** y añade la integración. |
 | No llegan los avisos programados. | No hay hábitos pendientes en ese bloque o el ID de KV `STATE` está mal configurado. | Verifica si hay tareas pendientes en ese bloque y revisa que el `id` en `kv_namespaces` de `wrangler.jsonc` sea el correcto. |
 | La racha no se actualiza. | Faltan las columnas de racha en «Hábitos». | Ejecuta `node scripts/setup.mjs notion --aplicar` para agregarlas automáticamente. |
+| «🩺 Notion no creó las filas de hoy». | Las plantillas de tus hábitos no tienen la repetición diaria activa. | Activa la recurrencia de cada plantilla (ver «Activar recurrencias y agregar hábitos»). |
 | El coach responde con texto fijo. | Cuenta de DeepSeek sin saldo o `LLM_API_KEY` mal configurada. | Revisa tu saldo en DeepSeek y verifica que la clave esté cargada en Cloudflare con `npx wrangler secret bulk .dev.vars`. |
 
 ## Privacidad y seguridad
