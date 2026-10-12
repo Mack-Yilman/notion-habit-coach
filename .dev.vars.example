@@ -1,0 +1,20 @@
+# Copia este archivo como .dev.vars y llena los valores. .dev.vars NUNCA se sube a GitHub.
+# Súbelos a Cloudflare con: npx wrangler secret bulk .dev.vars
+
+# Integración interna de Notion (https://www.notion.so/profile/integrations)
+NOTION_TOKEN=
+
+# Token que te da @BotFather al crear el bot
+TELEGRAM_BOT_TOKEN=
+
+# Texto aleatorio de 16+ caracteres (letras, números, _ y -). Valida que los mensajes vengan de Telegram.
+TELEGRAM_WEBHOOK_SECRET=
+
+# Tu chat ID: node scripts/setup.mjs chat-id
+TELEGRAM_CHAT_ID=
+
+# Clave de DeepSeek (https://platform.deepseek.com). Opcional: sin ella se usa Workers AI gratis.
+LLM_API_KEY=
+
+# Protege /admin/run (pruebas manuales). Opcional.
+ADMIN_SECRET=

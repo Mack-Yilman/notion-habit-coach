@@ -1,0 +1,32 @@
+# Archivos de contexto para agentes (personales, nunca se suben)
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+GEMINI.md
+.claude/
+.agents/
+.gemini/
+
+# Secretos y credenciales
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+*.key
+*.pem
+*.p12
+secrets*.json
+
+# Dependencias y builds
+node_modules/
+.wrangler/
+wrangler.local.jsonc
+dist/
+coverage/
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log

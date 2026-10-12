@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "notion-habit-coach",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-06",
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+
+  // Un solo cron cada 15 minutos (el plan gratuito permite 5 por cuenta).
+  // El Worker decide qué bloque toca según la hora local (TZ).
+  "triggers": { "crons": ["*/15 * * * *"] },
+
+  // Estado efímero: avisos enviados, contexto de mensajes, memoria corta del chat
+  // y caché de la Matriz Atómica. Los datos de hábitos viven solo en Notion.
+  // Crea el namespace con: npx wrangler kv namespace create STATE
+  "kv_namespaces": [
+    { "binding": "STATE", "id": "REEMPLAZA_CON_EL_ID_DE_TU_KV" }
+  ],
+
+  // Respaldo gratuito si DeepSeek no responde o no hay clave.
+  "ai": { "binding": "AI" },
+
+  "vars": {
+    "TZ": "America/Lima",
+    // Fuentes de datos de tu plantilla (node scripts/setup.mjs las detecta).
+    "HABITOS_DATA_SOURCE_ID": "REEMPLAZA",
+    // Proveedor LLM compatible con OpenAI. DeepSeek por defecto.
+    "LLM_BASE_URL": "https://api.deepseek.com",
+    "LLM_MODEL": "deepseek-flash",
+    "WORKERS_AI_MODEL": "@cf/google/gemma-4-26b-a4b-it",
+    // Horario de bloques (HH:MM locales). Ver src/config.ts para el significado.
+    "SCHEDULE": "manana=06:30,manana_ultimo=10:30,tarde=12:30,tarde_ultimo=16:30,noche=18:30,noche_ultimo=21:30,cierre=23:00,procesar=03:00",
+    "CHAT_DAILY_LIMIT": "30"
+  }
+}

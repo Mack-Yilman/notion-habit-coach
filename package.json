@@ -1,0 +1,27 @@
+{
+  "name": "notion-habit-coach",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bot de Telegram con coach de IA para el Habit Tracker Pro de Notion: recordatorios por bloque horario, rachas con congeladores y registro con botones.",
+  "author": "Mack Chirinos",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "setup": "node scripts/setup.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "types": "wrangler types --strict-vars=false",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.4",
+    "wrangler": "^4.149.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261006.1": true
+  }
+}
