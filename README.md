@@ -4,7 +4,7 @@ Bot de Telegram con coach de IA que hace accionable tu plantilla Habit Tracker P
 
 ## Qué hace
 
-- **Avisos por bloque horario**: Notificaciones según tu momento del día (no por hora fija), con la lista de hábitos pendientes y la «Señal» de la Matriz Atómica asociada a cada uno.
+- **Avisos por bloque horario**: Notificaciones según tu momento del día (no por hora fija): cada hábito pendiente llega en su propio mensaje con la «Señal» de su Matriz Atómica y su racha.
 - **Registro rápido con botones**: cada hábito pendiente llega en su propio mensaje con 5 íconos, en el mismo orden que el Protocolo de la plantilla (solo el primer mensaje del bloque suena). Tocar un ícono guarda ese nivel en Notion y el mensaje queda registrado con un botón ↩️ para deshacer:
   - 💤 **Omitido**
   - 🕯️ **Parcial**
@@ -234,12 +234,14 @@ El bot no crea hábitos: lee las filas diarias que Notion genera con las **plant
 
 Tras editar Matrices, envía `/actualizar` al bot para que las vuelva a leer.
 
+**¿Desde cuándo cuenta un hábito nuevo?** Desde su primera fila diaria (normalmente, al día siguiente de activar la repetición). No hay que tocar el bot: lo detecta solo, lo incluye en los avisos de su rango horario y su racha empieza en 0 con 🧊🧊. Si pausas la repetición de un hábito, los días sin fila son neutros: no suman ni gastan congeladores.
+
 ## Comandos del bot
 
 | Comando | Descripción |
 | --- | --- |
 | `/hoy` | Resumen del día y un mensaje con botones por cada hábito pendiente. |
-| `/pendientes` | Lista únicamente los hábitos pendientes de hoy. |
+| `/pendientes` | Un mensaje con botones por cada hábito pendiente de hoy. |
 | `/rachas` | Muestra el estado de tus rachas y congeladores disponibles. |
 | `/resumen` | Solicita una intervención del coach de IA en el momento. |
 | `/semana` | Ejecuta la revisión semanal con el coach ahora mismo. |
