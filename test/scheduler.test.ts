@@ -1,124 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { App } from '../src/app';
-import { closeDays, recalcular, runScheduled } from '../src/scheduler';
+import { closeDays, recalcular, revisarSalud, runScheduled } from '../src/scheduler';
 import { matricesFor, tarjetasABorrar } from '../src/app';
-import { DEFAULT_SCHEDULE } from '../src/schedule';
-import { localNow } from '../src/time';
+import { cerrada, fakeApp, num, row } from './fakes';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-const HAB = 'ds-habitos';
-
-function fakeKv() {
-  const m = new Map<string, string>();
-  return {
-    m,
-    async get(k: string, type?: string) {
-      const v = m.get(k);
-      if (v === undefined) return null;
-      return type === 'json' ? JSON.parse(v) : v;
-    },
-    async put(k: string, v: string) {
-      m.set(k, v);
-    },
-    async delete(k: string) {
-      m.delete(k);
-    },
-  };
-}
-
-const row = (id: string, habit: string, nombre: string, fecha: string, estado: string, racha?: { r: number; c: number; cerrada: boolean }) => ({
-  id,
-  properties: {
-    'Nombre del habito ': { type: 'title', title: [{ plain_text: nombre }] },
-    Estado: { type: 'select', select: { name: estado } },
-    Fecha: { type: 'date', date: { start: fecha } },
-    'Rango horario': { type: 'select', select: { name: '☀️ 06:00 a 11:59' } },
-    Objetivo: { type: 'rich_text', rich_text: [] },
-    'Estadística ': { type: 'relation', relation: [{ id: habit }] },
-    Racha: { type: 'number', number: racha ? racha.r : null },
-    'Mejor racha': { type: 'number', number: racha ? racha.r : null },
-    Congeladores: { type: 'number', number: racha ? racha.c : null },
-    'Racha cerrada': { type: 'checkbox', checkbox: racha?.cerrada ?? false },
-  },
-});
-
-function matches(filter: any, p: any): boolean {
-  if (!filter) return true;
-  if (filter.and) return filter.and.every((f: any) => matches(f, p));
-  const prop = p.properties[filter.property];
-  if (filter.relation) return prop.relation.some((r: any) => r.id === filter.relation.contains);
-  if (filter.checkbox) return prop.checkbox === filter.checkbox.equals;
-  const v = prop?.date?.start;
-  const d = filter.date;
-  if (d.equals) return v === d.equals;
-  if (d.before && !(v < d.before)) return false;
-  if (d.on_or_before && !(v <= d.on_or_before)) return false;
-  if (d.on_or_after && !(v >= d.on_or_after)) return false;
-  return true;
-}
-
-function fakeApp(nowUtc: string, rows: any[]) {
-  const updates: { id: string; props: any }[] = [];
-  const sent: { text: string; keyboard?: unknown; silent?: boolean }[] = [];
-  const deleted: number[] = [];
-  const notion = {
-    async getDataSource() {
-      return {
-        id: HAB,
-        properties: {
-          'Nombre del habito ': { type: 'title' },
-          Estado: { type: 'select', select: { options: [{ name: '⚪ Sin iniciar' }, { name: '⚡ Hecho' }, { name: '🕯️ Parcial' }, { name: '💤 Omitido' }] } },
-          Fecha: { type: 'date' },
-          Objetivo: { type: 'rich_text' },
-          'Rango horario': { type: 'select', select: { options: [] } },
-          'Estadística ': { type: 'relation', relation: { data_source_id: 'ds-est' } },
-          Racha: { type: 'number' },
-          'Mejor racha': { type: 'number' },
-          Congeladores: { type: 'number' },
-          'Racha cerrada': { type: 'checkbox' },
-        },
-      };
-    },
-    async queryAll(_ds: string, body: any) {
-      const out = rows.filter((r) => matches(body.filter, r));
-      const dir = body.sorts?.[0]?.direction === 'descending' ? -1 : 1;
-      return out.sort((a, b) => (a.properties.Fecha.date.start < b.properties.Fecha.date.start ? -dir : dir));
-    },
-    async updatePage(id: string, props: any) {
-      updates.push({ id, props });
-      const r = rows.find((x) => x.id === id);
-      for (const [k, v] of Object.entries(props)) r.properties[k] = { ...r.properties[k], ...(v as object) };
-      return r;
-    },
-    async children() {
-      return [];
-    },
-  };
-  const kv = fakeKv();
-  const app = {
-    env: { HABITOS_DATA_SOURCE_ID: HAB } as any,
-    kv: kv as any,
-    notion: notion as any,
-    tg: {
-      async send(_chat: string, text: string, keyboard?: unknown, opts: { silent?: boolean } = {}) {
-        sent.push({ text, keyboard, silent: opts.silent });
-        return { message_id: sent.length };
-      },
-      async deleteMessage(_chat: string, mid: number) {
-        deleted.push(mid);
-      },
-    } as any,
-    now: localNow(new Date(nowUtc), 'America/Lima'),
-    schedule: DEFAULT_SCHEDULE,
-    chatId: '1',
-    llm: async () => ({ content: 'ok', toolCalls: [], provider: 'openai-compatible' as const }),
-  } satisfies App;
-  return { app, updates, sent, deleted, kv, rows };
-}
-
-const num = (r: any, k: string) => r.properties[k].number;
-const cerrada = (r: any) => r.properties['Racha cerrada'].checkbox;
 
 // 2026-10-14 03:05 en Lima = 08:05 UTC
 const NOW = '2026-10-14T08:05:00Z';
@@ -330,5 +215,152 @@ describe('prioridad de Matrices', () => {
     const e = (pageId: string, habitId: string) => ({ pageId, habitId, nombre: pageId, estado: null, fecha: '2026-10-14', rango: null, objetivo: '', identidad: '' });
     await matricesFor(app, [e('p-noche', 'h-noche'), e('p-gym', 'h-gym'), e('p-noche', 'h-noche')], 1);
     expect(leidas).toEqual(['p-noche']);
+  });
+});
+
+describe('auditoría 2026-10-12', () => {
+  it('hábito pausado (sin fila en el inicio de la ventana) conserva su última racha cerrada', async () => {
+    // Última fila cerrada el 10/09; vuelve el 05/10. Los días sin fila son neutros.
+    const rows: any[] = [row('old', 'h-gym', 'Gym', '2026-09-10', '⚡ Hecho', { r: 20, c: 1, cerrada: true })];
+    for (let d = 5; d <= 14; d++) rows.push(row(`g${d}`, 'h-gym', 'Gym', `2026-10-${String(d).padStart(2, '0')}`, '⚡ Hecho'));
+    const { app } = fakeApp('2026-10-15T08:05:00Z', rows);
+    await closeDays(app);
+    expect(num(rows.find((x) => x.id === 'g14'), 'Racha')).toBe(30);
+  });
+
+  it('las notas del cierre llegan aunque la mañana no tenga pendientes', async () => {
+    const { app, sent, kv } = fakeApp('2026-10-14T11:30:00Z', [row('a14', 'h-agua', 'Agua', '2026-10-14', '⚡ Hecho')]);
+    kv.m.set('notas:2026-10-14', '🧊 «Gym» usó un congelador (lun 13/10).');
+    await runScheduled(app);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain('Buenos días');
+    expect(sent[0]!.text).toContain('«Gym» usó un congelador');
+  });
+
+  it('sin filas de hoy el bloque no queda como enviado (se reintenta) ni cuenta como error', async () => {
+    const { app, kv } = fakeApp('2026-10-14T11:30:00Z', []);
+    await runScheduled(app);
+    expect(kv.m.has('sent:2026-10-14:manana')).toBe(false);
+    expect(kv.m.has('errores:2026-10-14')).toBe(false);
+  });
+});
+
+describe('nunca falles dos veces', () => {
+  it('el cierre anota quién falló ayer y su tarjeta de hoy lo dice con la versión mínima', async () => {
+    const rows = [
+      row('g13', 'h-gym', 'Gym', '2026-10-13', '⚪ Sin iniciar', { r: 3, c: 2, cerrada: false }),
+      row('g14', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar'),
+      row('a13', 'h-agua', 'Agua', '2026-10-13', '⚡ Hecho'),
+      row('a14', 'h-agua', 'Agua', '2026-10-14', '⚪ Sin iniciar'),
+    ];
+    const c = fakeApp(NOW, rows);
+    await closeDays(c.app);
+    expect(JSON.parse(c.kv.m.get('fallos:2026-10-14')!)).toEqual(['h-gym']);
+
+    const m = fakeApp('2026-10-14T11:30:00Z', rows);
+    m.app.kv = c.app.kv;
+    c.kv.m.set('matrix:h-gym', JSON.stringify({ senal: 'Ropa lista', protocolo: { parcial: '10 sentadillas' } }));
+    await runScheduled(m.app);
+    const gym = m.sent.find((s) => s.text.includes('<b>Gym</b>'))!;
+    const agua = m.sent.find((s) => s.text.includes('<b>Agua</b>'))!;
+    expect(gym.text).toContain('⚠️ <i>Ayer no salió: no falles dos veces.</i>\n🕯️ Mínimo: <i>10 sentadillas</i>\n💡 <i>Ropa lista</i>');
+    expect(agua.text).not.toContain('no falles dos veces');
+  });
+});
+
+describe('alertas de salud', () => {
+  it('avisa una sola vez si un bloque falló en todos sus reintentos', async () => {
+    const rows = [row('g14', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar')];
+    // 06:30 Lima: Telegram falla al enviar el aviso.
+    const f = fakeApp('2026-10-14T11:30:00Z', rows);
+    f.app.tg.send = async () => {
+      throw new Error('Telegram 500: caído');
+    };
+    await runScheduled(f.app);
+    expect(JSON.parse(f.kv.m.get('errores:2026-10-14')!)).toHaveProperty('manana');
+    // 07:45 Lima: pasó la ventana del bloque; un ciclo sin aviso revisa la salud.
+    const s = fakeApp('2026-10-14T12:45:00Z', rows);
+    s.app.kv = f.app.kv;
+    await runScheduled(s.app);
+    await runScheduled(s.app);
+    expect(s.sent).toHaveLength(1);
+    expect(s.sent[0]!.text).toContain('Revisión del bot');
+    expect(s.sent[0]!.text).toContain('Falló el aviso «☀️ Buenos días»');
+  });
+
+  it('no avisa mientras el bloque aún puede reintentarse', async () => {
+    const f = fakeApp('2026-10-14T11:30:00Z', []);
+    f.kv.m.set('errores:2026-10-14', JSON.stringify({ manana: 'x' }));
+    expect(await revisarSalud(f.app)).not.toContain('manana');
+  });
+
+  it('avisa si Notion no creó las filas de hoy (recurrencias apagadas), una vez', async () => {
+    // 06:10 Lima: no toca ningún bloque.
+    const { app, sent } = fakeApp('2026-10-14T11:10:00Z', []);
+    await runScheduled(app);
+    await runScheduled(app);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain('recurrencia diaria activada');
+  });
+
+  it('avisa si el coach de IA falló, y sugiere recargar si es falta de saldo', async () => {
+    const { app, sent, kv } = fakeApp('2026-10-14T11:10:00Z', [row('g14', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar')]);
+    kv.m.set('salud:llm:2026-10-14', 'Error: LLM 402: Insufficient Balance');
+    await runScheduled(app);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain('recarga tu cuenta de DeepSeek');
+  });
+});
+
+describe('recalcular con tope de llamadas', () => {
+  it('se corta antes del límite y al repetirlo termina sin reescribir lo ya hecho', async () => {
+    const rows: any[] = [];
+    for (let h = 0; h < 25; h++) {
+      rows.push(row(`r${h}a`, `h-${h}`, `H${h}`, '2026-10-13', '⚡ Hecho'));
+      rows.push(row(`r${h}b`, `h-${h}`, `H${h}`, '2026-10-14', '⚪ Sin iniciar'));
+    }
+    const { app, updates } = fakeApp(NOW, rows);
+    const r1 = await recalcular(app);
+    expect(r1.incompleto).toBe(true);
+    expect(updates.length).toBeLessThanOrEqual(40);
+    const n1 = updates.length;
+    const r2 = await recalcular(app);
+    expect(r2).toMatchObject({ incompleto: false, habitos: 25, total: 25 });
+    expect(updates.length - n1).toBe(50 - n1);
+    for (let h = 0; h < 25; h++) expect(num(rows.find((x) => x.id === `r${h}b`), 'Racha')).toBe(1);
+  });
+});
+
+describe('alerta del cierre de las 23:00', () => {
+  it('si falló, se avisa al día siguiente (su ventana termina a medianoche)', async () => {
+    const { app, sent, kv } = fakeApp('2026-10-14T11:10:00Z', [row('g14', 'h-gym', 'Gym', '2026-10-14', '⚪ Sin iniciar')]);
+    kv.m.set('errores:2026-10-13', JSON.stringify({ cierre: 'LLM 500', manana: 'ya avisado ayer' }));
+    await runScheduled(app);
+    await runScheduled(app);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain('Cierre del día');
+    expect(sent[0]!.text).not.toContain('Buenos días');
+  });
+});
+
+describe('alertas de salud: horario', () => {
+  it('de madrugada no avisa (espera a las 06:00 para no despertar)', async () => {
+    // 02:00 Lima, sin filas de hoy.
+    const { app, sent } = fakeApp('2026-10-14T07:00:00Z', []);
+    await runScheduled(app);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('hábitos sin relación (agrupados por nombre) también recuperan su última racha cerrada', async () => {
+    const sinRelacion = (id: string, fecha: string, racha?: { r: number; c: number; cerrada: boolean }) => {
+      const r: any = row(id, 'x', 'Leer', fecha, '⚡ Hecho', racha);
+      r.properties['Estadística '].relation = [];
+      return r;
+    };
+    const rows: any[] = [sinRelacion('old', '2026-09-10', { r: 8, c: 2, cerrada: true })];
+    for (let d = 5; d <= 14; d++) rows.push(sinRelacion(`l${d}`, `2026-10-${String(d).padStart(2, '0')}`));
+    const { app } = fakeApp('2026-10-15T08:05:00Z', rows);
+    await closeDays(app);
+    expect(num(rows.find((x) => x.id === 'l14'), 'Racha')).toBe(18);
   });
 });

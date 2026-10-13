@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { headerAviso, renderCard, renderRachas, renderResumenHoy } from '../src/messages';
+import { headerAviso, renderCard, renderMapa, renderRachas, renderResumenHoy } from '../src/messages';
 import { parseMatrix } from '../src/matrix';
 import { sanitizeLlmHtml } from '../src/telegram';
 import type { Entry } from '../src/habits';
@@ -104,5 +104,34 @@ describe('sanitizeLlmHtml', () => {
   });
   it('elimina bloques de razonamiento', () => {
     expect(sanitizeLlmHtml('<think>pienso</think>Respuesta')).toBe('Respuesta');
+  });
+});
+
+describe('nunca falles dos veces (tarjeta)', () => {
+  it('si falló ayer: aviso y versión mínima antes de la Señal', () => {
+    const r = renderCard(entry({ rango: null }), 'Ropa lista', undefined, { falloAyer: true, minima: '10 sentadillas' });
+    expect(r.text).toBe('<b>Ir al gimnasio</b> · 1 hora\n⚠️ <i>Ayer no salió: no falles dos veces.</i>\n🕯️ Mínimo: <i>10 sentadillas</i>\n💡 <i>Ropa lista</i>');
+  });
+  it('registrado: ya no muestra el aviso', () => {
+    expect(renderCard(entry({ estado: 'hecho' }), undefined, undefined, { falloAyer: true }).text).not.toContain('no falles');
+  });
+});
+
+describe('renderMapa', () => {
+  it('una fila de íconos por hábito, en semanas de 7; ➖ si no hubo fila', () => {
+    const dias = ['2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06'];
+    const hist = [
+      ...dias.map((f, i) => entry({ fecha: f, estado: i % 2 ? 'omitido' : 'hecho', nombre: 'Gym <1>' })),
+      entry({ fecha: '2026-10-06', estado: 'parcial', habitId: 'h2', nombre: 'Leer', rango: 'noche' }),
+    ];
+    const m = renderMapa(hist, '2026-09-29', '2026-10-06');
+    expect(m).toContain('<b>🗓️ Últimos 8 días</b> · mar 29/09 → mar 06/10');
+    expect(m).toContain('⚡💤⚡💤⚡💤⚡ 💤  Gym &lt;1&gt;');
+    expect(m).toContain('➖➖➖➖➖➖➖ 🕯️  Leer');
+    // Tarde antes que noche, como en la plantilla.
+    expect(m.indexOf('Gym')).toBeLessThan(m.indexOf('Leer'));
+  });
+  it('sin historial no devuelve nada', () => {
+    expect(renderMapa([], '2026-10-01', '2026-10-14')).toBe('');
   });
 });

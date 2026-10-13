@@ -2,22 +2,26 @@
 
 import {
   coachData,
+  extrasCard,
   fetchDay,
   enviarTarjetas,
   MATRICES_POR_COMANDO,
   fetchRange,
+  getFallosAyer,
   getMsgContext,
   getSchema,
   loadStats,
   matricesFor,
+  pendientesDeAyer,
+  refrescarTarjetas,
   type App,
 } from './app';
 import { decodeCallback } from './callback';
-import { buildHistorial, coachChat, coachCierre, coachSemana, type ChatTurn } from './coach';
+import { buildHistorial, coachChat, coachCierre, coachSemana, TIMEOUT_COMANDO_MS, type ChatTurn } from './coach';
 import { ESTADO_BY_KEY } from './config';
 import { estadoProperty, isPending, parseEntry, type Entry } from './habits';
-import { clearMatrices, senalesDe } from './matrix';
-import { AYUDA, LEYENDA, renderCard, renderRachas, renderResumenHoy } from './messages';
+import { clearMatrices } from './matrix';
+import { AYUDA, LEYENDA, renderCard, renderMapa, renderRachas, renderResumenHoy } from './messages';
 import { olvidarMatricesOk, recalcular } from './scheduler';
 import { addDays, formatCorto } from './time';
 import { esc } from './telegram';
@@ -60,7 +64,15 @@ export async function handleUpdate(app: App, update: Update): Promise<void> {
         return enviarResumen(app, true);
       case 'recalcular': {
         const r = await recalcular(app);
-        await app.tg.send(app.chatId, `✅ Rachas recalculadas para ${r.habitos} hábitos, hasta el ${r.hasta}.`);
+        if (r.incompleto) {
+          await app.tg.send(
+            app.chatId,
+            `⏳ Recalculé ${r.habitos} de ${r.total} hábitos (tope de llamadas del plan gratuito). Envía /recalcular otra vez para terminar.`,
+          );
+          return;
+        }
+        const desde = r.desde ? ` Usé el historial desde el ${r.desde}; lo anterior se toma como estaba.` : '';
+        await app.tg.send(app.chatId, `✅ Rachas recalculadas para ${r.habitos} hábitos, hasta el ${r.hasta}.${desde}`);
         return enviarRachas(app);
       }
       case 'actualizar':
@@ -92,6 +104,13 @@ async function onCallback(app: App, q: Update): Promise<void> {
   const schema = await getSchema(app);
   let marcado: Entry;
   try {
+    // Un día ya cerrado (a las 03:00) no se cambia desde Telegram: su racha ya quedó escrita.
+    const actual = parseEntry(await app.notion.getPage(cb.pageId), schema);
+    if (actual.streak?.cerrada) {
+      await app.tg.answerCallback(q.id, `📅 El ${actual.fecha ?? 'día'} ya se cerró a las 03:00: la racha no cambia.`);
+      if (messageId) await app.tg.clearKeyboard(app.chatId, messageId);
+      return;
+    }
     marcado = parseEntry(await app.notion.updatePage(cb.pageId, estadoProperty(schema, cb.estado)), schema);
   } catch (e) {
     console.error('callback', e);
@@ -109,30 +128,40 @@ async function onCallback(app: App, q: Update): Promise<void> {
     return;
   }
   // La respuesta del PATCH ya trae la página actualizada: no hace falta consultar de nuevo.
-  const senal = isPending(marcado) && marcado.habitId ? senalesDe(await matricesFor(app, [marcado]))[marcado.habitId] : undefined;
-  const r = renderCard(marcado, senal, ctx.header);
+  let r = renderCard(marcado, undefined, ctx.header);
+  if (isPending(marcado)) {
+    const [matrices, fallosAyer] = await Promise.all([matricesFor(app, [marcado]), getFallosAyer(app)]);
+    const x = extrasCard(marcado, app, matrices, fallosAyer);
+    r = renderCard(marcado, x.senal, ctx.header, x.extras);
+  }
   await app.tg.edit(app.chatId, messageId, r.text, r.keyboard);
 }
 
 async function enviarHoy(app: App, soloPendientes: boolean): Promise<void> {
   const schema = await getSchema(app);
-  const hoy = await fetchDay(app, schema, app.now.date);
-  if (!hoy.length) {
+  const [hoy, ayer] = await Promise.all([fetchDay(app, schema, app.now.date), pendientesDeAyer(app, schema)]);
+  if (!hoy.length && !ayer.length) {
     await app.tg.send(app.chatId, 'No hay hábitos para hoy en Notion. ¿Están activas las plantillas recurrentes?');
     return;
   }
-  const pendientes = hoy.filter(isPending);
-  if (!pendientes.length) {
-    await app.tg.send(app.chatId, soloPendientes ? '🎉 No te queda nada pendiente hoy.' : renderResumenHoy(`<b>📋 Hoy</b> · ${formatCorto(app.now.date)}`, hoy));
-    return;
-  }
+  const fecha = formatCorto(app.now.date);
   const leyenda = `<i>${LEYENDA}</i>`;
-  if (soloPendientes) {
-    await enviarTarjetas(app, hoy, pendientes, `<b>⏳ Pendientes</b> · ${formatCorto(app.now.date)}\n${leyenda}`, MATRICES_POR_COMANDO);
-    return;
+  const pendientes = hoy.filter(isPending);
+  const todas = [...ayer, ...hoy];
+  if (!soloPendientes && hoy.length) await app.tg.send(app.chatId, renderResumenHoy(`<b>📋 Hoy</b> · ${fecha}`, hoy));
+  if (ayer.length) {
+    // De madrugada el día anterior sigue abierto. Sus Matrices ya están en caché (mismos hábitos).
+    await enviarTarjetas(app, todas, ayer, `<b>🌒 Pendientes de ayer</b> · se cierran a las 03:00\n${leyenda}`);
   }
-  await app.tg.send(app.chatId, renderResumenHoy(`<b>📋 Hoy</b> · ${formatCorto(app.now.date)}`, hoy));
-  await enviarTarjetas(app, hoy, pendientes, leyenda, MATRICES_POR_COMANDO);
+  if (pendientes.length) {
+    // Con dos tandas (ayer y hoy) la segunda no lee Matrices (límite de 50 subrequests; suelen
+    // estar en caché) ni suena: ya sonó la de ayer.
+    const dosTandas = ayer.length > 0;
+    const header = soloPendientes ? `<b>⏳ Pendientes</b> · ${fecha}\n${leyenda}` : leyenda;
+    await enviarTarjetas(app, todas, pendientes, header, dosTandas ? 0 : MATRICES_POR_COMANDO, dosTandas);
+  } else if (soloPendientes && !ayer.length) {
+    await app.tg.send(app.chatId, '🎉 No te queda nada pendiente hoy.');
+  }
 }
 
 async function enviarRachas(app: App): Promise<void> {
@@ -150,9 +179,12 @@ async function enviarResumen(app: App, semanal: boolean): Promise<void> {
   let texto: string;
   if (semanal) {
     const desde = addDays(app.now.date, -13);
-    texto = await coachSemana(app.llm, data, buildHistorial(await fetchRange(app, schema, desde, app.now.date, 3), desde, app.now.date));
+    const hist = await fetchRange(app, schema, desde, app.now.date, 3);
+    texto = await coachSemana(app.llm, data, buildHistorial(hist, desde, app.now.date), TIMEOUT_COMANDO_MS);
+    const mapa = renderMapa(hist, desde, app.now.date);
+    if (mapa) texto += `\n\n${mapa}`;
   } else {
-    texto = await coachCierre(app.llm, data);
+    texto = await coachCierre(app.llm, data, TIMEOUT_COMANDO_MS);
   }
   await app.tg.send(app.chatId, `<b>${semanal ? '📊 Revisión' : '🧭 Resumen'}</b> · ${formatCorto(app.now.date)}\n\n${texto}`);
 }
@@ -162,8 +194,9 @@ async function actualizar(app: App): Promise<void> {
   const hoy = await fetchDay(app, schema, app.now.date);
   await clearMatrices(app.kv, hoy.map((e) => e.habitId).filter((x): x is string => !!x));
   await olvidarMatricesOk(app);
-  // Primero las de los pendientes (son las que se ven en las tarjetas).
-  const m = await matricesFor(app, [...hoy.filter(isPending), ...hoy], 6);
+  // Primero las de los pendientes (son las que se ven en las tarjetas). Hasta ~10 llamadas
+  // por Matriz: más de 4 arriesga el límite de 50 subrequests.
+  const m = await matricesFor(app, [...hoy.filter(isPending), ...hoy], MATRICES_POR_COMANDO);
   const total = new Set(hoy.map((e) => e.habitId).filter(Boolean)).size;
   await app.tg.send(
     app.chatId,
@@ -175,6 +208,8 @@ async function actualizar(app: App): Promise<void> {
 // ---------- Chat con el coach ----------
 
 const HIST_KEY = 'chat:hist';
+/** Tiempo para todas las rondas del chat: `waitUntil` corta a los 30 s. */
+const PRESUPUESTO_CHAT_MS = 24_000;
 const countKey = (date: string) => `chat:count:${date}`;
 
 async function chat(app: App, text: string): Promise<void> {
@@ -186,15 +221,22 @@ async function chat(app: App, text: string): Promise<void> {
   }
   await app.tg.typing(app.chatId);
   const schema = await getSchema(app);
-  const hoy = await fetchDay(app, schema, app.now.date);
-  const data = await coachData(app, hoy);
+  const [hoy, ayer] = await Promise.all([fetchDay(app, schema, app.now.date), pendientesDeAyer(app, schema)]);
+  const data = await coachData(app, hoy, ayer);
   const history = (await app.kv.get<ChatTurn[]>(HIST_KEY, 'json')) ?? [];
 
-  const r = await coachChat(app.llm, data, history, text.slice(0, 1500), async (entry, estado) => {
-    await app.notion.updatePage(entry.pageId, estadoProperty(schema, estado));
-  });
+  const r = await coachChat(
+    app.llm,
+    data,
+    history,
+    text.slice(0, 1500),
+    async (entry, estado) => parseEntry(await app.notion.updatePage(entry.pageId, estadoProperty(schema, estado)), schema),
+    PRESUPUESTO_CHAT_MS,
+  );
   const extra = r.marcados.length ? `\n\n<i>Registrado en Notion: ${r.marcados.map(esc).join(', ')}</i>` : '';
   await app.tg.send(app.chatId, (r.text || '…') + extra);
+  // Las tarjetas de lo que se marcó por chat pasan a mostrar el nivel y ↩️.
+  await refrescarTarjetas(app, r.actualizadas);
 
   const nuevo = [...history, { role: 'user' as const, content: text.slice(0, 1500) }, { role: 'assistant' as const, content: r.text }].slice(-12);
   await Promise.all([

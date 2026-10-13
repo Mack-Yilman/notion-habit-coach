@@ -3,12 +3,12 @@
 import type { Env } from './env';
 import { hasStreakProps, isPending, parseEntry, resolveHabitosSchema, sortEntries, statsFromEntries, type Entry, type HabitosSchema, type Stats } from './habits';
 import { complete, type LlmOptions } from './llm';
-import { getCachedMatrices, refreshMatrices, senalesDe, type Matrix } from './matrix';
-import { renderCard } from './messages';
+import { getCachedMatrices, refreshMatrices, type Matrix } from './matrix';
+import { renderCard, type ExtrasCard } from './messages';
 import { Notion } from './notion';
 import { parseSchedule, type SlotKey } from './schedule';
 import { Telegram } from './telegram';
-import { localNow, type LocalNow } from './time';
+import { addDays, localNow, type LocalNow } from './time';
 import type { CoachData } from './coach';
 
 export interface App {
@@ -22,16 +22,32 @@ export interface App {
   llm: (opts: LlmOptions) => ReturnType<typeof complete>;
 }
 
+/** Hábitos (habitId) que fallaron el día anterior a `date`: «nunca falles dos veces». */
+export const fallosKey = (date: string) => `fallos:${date}`;
+/** Último error del LLM principal en el día (lo avisa la revisión de salud). */
+export const llmFallaKey = (date: string) => `salud:llm:${date}`;
+
 export function makeApp(env: Env, when = new Date()): App {
+  const now = localNow(when, env.TZ || 'America/Lima');
+  const anotarFalla = (error: string) => env.STATE.put(llmFallaKey(now.date), error.slice(0, 300), { expirationTtl: 2 * 86400 });
   return {
     env,
     kv: env.STATE,
     notion: new Notion(env.NOTION_TOKEN),
     tg: new Telegram(env.TELEGRAM_BOT_TOKEN),
-    now: localNow(when, env.TZ || 'America/Lima'),
+    now,
     schedule: parseSchedule(env.SCHEDULE),
     chatId: String(env.TELEGRAM_CHAT_ID ?? '').trim(),
-    llm: (opts) => complete(env, opts),
+    llm: async (opts) => {
+      try {
+        const r = await complete(env, opts);
+        if (r.errorPrincipal) await anotarFalla(r.errorPrincipal);
+        return r;
+      } catch (e) {
+        await anotarFalla(String(e));
+        throw e;
+      }
+    },
   };
 }
 
@@ -115,9 +131,27 @@ export async function matricesFor(app: App, entries: Entry[], refreshMax = 0): P
 /** Cuántas Matrices leer de una vez en un comando (~6 llamadas a Notion cada una; límite 50). */
 export const MATRICES_POR_COMANDO = 4;
 
-export async function coachData(app: App, entries: Entry[], date = app.now.date): Promise<CoachData> {
-  const [stats, matrices] = await Promise.all([loadStats(app, entries), matricesFor(app, entries)]);
-  return { fecha: date, hora: hhmm(app), entries, stats, matrices };
+export async function coachData(app: App, entries: Entry[], ayer: Entry[] = []): Promise<CoachData> {
+  const [stats, matrices, fallosAyer] = await Promise.all([loadStats(app, entries), matricesFor(app, [...entries, ...ayer]), getFallosAyer(app)]);
+  return { fecha: app.now.date, hora: hhmm(app), entries, stats, matrices, fallosAyer, ...(ayer.length ? { ayer } : {}) };
+}
+
+export async function getFallosAyer(app: App): Promise<string[]> {
+  return (await app.kv.get<string[]>(fallosKey(app.now.date), 'json')) ?? [];
+}
+
+/** Entre las 00:00 y el cierre (03:00) el día anterior sigue abierto: sus pendientes. */
+export async function pendientesDeAyer(app: App, s: HabitosSchema): Promise<Entry[]> {
+  if (app.now.minutes >= app.schedule.procesar) return [];
+  return (await fetchDay(app, s, addDays(app.now.date, -1))).filter(isPending);
+}
+
+/** Lo que muestra una tarjeta pendiente además del hábito: Señal, «nunca falles dos veces» y mínimo. */
+export function extrasCard(e: Entry, app: App, matrices: Record<string, Matrix>, fallosAyer: string[]): { senal?: string; extras: ExtrasCard } {
+  const m = e.habitId ? matrices[e.habitId] : undefined;
+  // «Ayer» solo tiene sentido para las filas de hoy (no para pendientes de ayer de madrugada).
+  const falloAyer = !!e.habitId && e.fecha === app.now.date && fallosAyer.includes(e.habitId);
+  return { senal: m?.senal, extras: falloAyer ? { falloAyer, minima: m?.protocolo.parcial } : {} };
 }
 
 // ---------- Contexto de mensajes con botones ----------
@@ -153,6 +187,12 @@ export interface CardRef {
 }
 
 const CARDS_KEY = 'cards:activas';
+/** Subrequests externas por invocación en el plan gratuito. */
+const LIMITE_LLAMADAS = 50;
+/** Llamadas que hace el resto de la invocación (consultas del día, cabecera, KV no cuenta). */
+const RESERVA_LLAMADAS = 8;
+/** Tope de llamadas de una Matriz (`collectTables`). */
+const COSTO_MATRIZ = 10;
 /** Telegram es una subrequest por mensaje borrado: tope por ejecución (lo demás, la próxima vez). */
 const MAX_BORRADOS = 15;
 
@@ -189,17 +229,43 @@ export async function enviarTarjetas(
   const borradas = new Set(borrar.map((c) => c.mid));
   const vivas = cards.filter((c) => !borradas.has(c.mid));
 
-  // Primero las tarjetas que se van a enviar: así su 💡 Señal sale aunque falten otras.
-  const senales = senalesDe(await matricesFor(app, [...pendientes, ...hoy], leerMatrices));
-  for (const [i, e] of pendientes.entries()) {
-    const h = i === 0 ? header : undefined;
-    const r = renderCard(e, e.habitId ? senales[e.habitId] : undefined, h);
-    const msg = await app.tg.send(app.chatId, r.text, r.keyboard, { silent: silencioso || i > 0 });
-    await saveMsgContext(app, msg.message_id, { kind: 'habito', pageId: e.pageId, ...(h ? { header: h } : {}) });
-    vivas.push({ mid: msg.message_id, pageId: e.pageId, date: app.now.date });
+  // Primero las tarjetas que se van a enviar: así su 💡 Señal sale aunque falten otras. Cada
+  // Matriz cuesta hasta 10 llamadas: solo se leen las que caben junto a borrados y envíos.
+  const caben = Math.floor((LIMITE_LLAMADAS - RESERVA_LLAMADAS - borrar.length - pendientes.length) / COSTO_MATRIZ);
+  const leer = Math.max(0, Math.min(leerMatrices, caben));
+  const [matrices, fallosAyer] = await Promise.all([matricesFor(app, [...pendientes, ...hoy], leer), getFallosAyer(app)]);
+  try {
+    for (const [i, e] of pendientes.entries()) {
+      const h = i === 0 ? header : undefined;
+      const x = extrasCard(e, app, matrices, fallosAyer);
+      const r = renderCard(e, x.senal, h, x.extras);
+      const msg = await app.tg.send(app.chatId, r.text, r.keyboard, { silent: silencioso || i > 0 });
+      await saveMsgContext(app, msg.message_id, { kind: 'habito', pageId: e.pageId, ...(h ? { header: h } : {}) });
+      vivas.push({ mid: msg.message_id, pageId: e.pageId, date: app.now.date });
+    }
+  } finally {
+    // Aunque el envío se corte a mitad, las tarjetas ya enviadas quedan registradas: el
+    // reintento las reemplaza en lugar de duplicarlas.
+    await app.kv.put(CARDS_KEY, JSON.stringify(vivas), { expirationTtl: 3 * 86400 });
   }
-  await app.kv.put(CARDS_KEY, JSON.stringify(vivas), { expirationTtl: 3 * 86400 });
   return pendientes.length;
+}
+
+/** Actualiza las tarjetas vivas de estas filas (p. ej. tras marcarlas por chat). */
+export async function refrescarTarjetas(app: App, filas: Entry[]): Promise<void> {
+  if (!filas.length) return;
+  const cards = (await app.kv.get<CardRef[]>(CARDS_KEY, 'json')) ?? [];
+  for (const e of filas) {
+    for (const c of cards.filter((x) => x.pageId === e.pageId)) {
+      const ctx = await getMsgContext(app, c.mid);
+      const r = renderCard(e, undefined, ctx?.header);
+      try {
+        await app.tg.edit(app.chatId, c.mid, r.text, r.keyboard);
+      } catch (err) {
+        console.error('refrescar tarjeta', c.mid, err);
+      }
+    }
+  }
 }
 
 // ---------- Seguridad ----------

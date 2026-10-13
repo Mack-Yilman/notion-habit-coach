@@ -41,6 +41,8 @@ export interface LlmResult {
   content: string;
   toolCalls: ToolCall[];
   provider: 'openai-compatible' | 'workers-ai';
+  /** Error del proveedor principal cuando respondió el respaldo. */
+  errorPrincipal?: string;
   usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number };
 }
 
@@ -58,7 +60,8 @@ export async function complete(env: Env, opts: LlmOptions, fetchFn?: FetchFn): P
   }
   if (env.AI) {
     try {
-      return await workersAi(env, opts);
+      const r = await workersAi(env, opts);
+      return errores.length ? { ...r, errorPrincipal: errores[0] } : r;
     } catch (e) {
       errores.push(String(e));
       console.error('Workers AI falló', e);
