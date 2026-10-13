@@ -34,6 +34,10 @@ export interface CoachData {
   entries: Entry[]; // filas de hoy
   stats: Record<string, Stats>; // por habitId
   matrices: Record<string, Matrix>; // por habitId
+  /** habitIds que fallaron ayer (gastaron 🧊 o perdieron la racha). */
+  fallosAyer?: string[];
+  /** Pendientes de ayer, solo entre las 00:00 y el cierre de las 03:00. */
+  ayer?: Entry[];
 }
 
 // ---------- Contexto (puro) ----------
@@ -82,7 +86,12 @@ export function buildContext(d: CoachData, matrizPara: 'pendientes' | 'todos' | 
     const proy = proyeccion(e, st) ?? '';
     const rango = e.rango ? RANGO_BY_KEY[e.rango].label : 'sin rango';
     const ident = e.identidad ? ` | identidad: ${e.identidad}` : '';
-    lines.push(`- ${e.nombre} | ${rango} | ${e.objetivo || 'sin objetivo'} | ${estadoTxt(e)} | ${racha} | ${hielo} | ${proy}${ident}`);
+    const fallo = e.habitId && d.fallosAyer?.includes(e.habitId) ? ' | AYER FALLÓ: no debe fallar dos veces' : '';
+    lines.push(`- ${e.nombre} | ${rango} | ${e.objetivo || 'sin objetivo'} | ${estadoTxt(e)} | ${racha} | ${hielo} | ${proy}${ident}${fallo}`);
+  }
+  if (d.ayer?.length) {
+    lines.push('', 'PENDIENTES DE AYER (aún se pueden registrar con dia="ayer"; el día se cierra a las 03:00):');
+    for (const e of d.ayer) lines.push(`- ${e.nombre} | ${e.rango ? RANGO_BY_KEY[e.rango].label : 'sin rango'} | ${e.objetivo || 'sin objetivo'}`);
   }
 
   const elegidos = entries.filter((e) =>
@@ -161,23 +170,24 @@ export const TAREA_SEMANA = `TAREA: revisión semanal, máximo 200 palabras.
 4) El foco de la próxima semana en una línea.`;
 
 export const TAREA_CHAT = `TAREA: conversación libre con el usuario. Responde en máximo 90 palabras salvo que pida más detalle.
-Si el usuario afirma con claridad que hizo, hizo en parte, superó u omitió un hábito de HOY, usa la herramienta marcar_estado y confírmalo en tu respuesta. Si no está claro cuál hábito o qué nivel, pregunta antes de marcar. Nunca marques hábitos de otros días.`;
+Si el usuario afirma con claridad que hizo, hizo en parte, superó u omitió un hábito de HOY, usa la herramienta marcar_estado y confírmalo en tu respuesta. Si no está claro cuál hábito o qué nivel, pregunta antes de marcar. Solo marca hábitos de HOY o, si aparece la lista, de PENDIENTES DE AYER (con dia="ayer"); si no está claro de qué día habla, pregunta. Nunca marques otros días.`;
 
 export const TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
       name: 'marcar_estado',
-      description: 'Registra en Notion el estado de un hábito de HOY.',
+      description: 'Registra en Notion el estado de un hábito de HOY (o de PENDIENTES DE AYER, si aparece esa lista).',
       parameters: {
         type: 'object',
         properties: {
-          habito: { type: 'string', description: 'Nombre exacto del hábito, tal como aparece en HÁBITOS DE HOY.' },
+          habito: { type: 'string', description: 'Nombre exacto del hábito, tal como aparece en HÁBITOS DE HOY o en PENDIENTES DE AYER.' },
           estado: {
             type: 'string',
             enum: ['hecho', 'parcial', 'superado', 'alto_impacto', 'omitido', 'sin_iniciar'],
             description: 'Nivel alcanzado según el Protocolo de Ejecución Flexible.',
           },
+          dia: { type: 'string', enum: ['hoy', 'ayer'], description: '«ayer» solo para un hábito de PENDIENTES DE AYER. Por defecto, «hoy».' },
         },
         required: ['habito', 'estado'],
       },
@@ -223,7 +233,13 @@ export function fallbackCierre(d: CoachData): string {
   ].join('\n');
 }
 
-export async function coachCierre(complete: Completer, d: CoachData): Promise<string> {
+/**
+ * Límite de espera del LLM. Desde un comando de Telegram el trabajo corre en `waitUntil`,
+ * que Cloudflare corta a los 30 s: con DeepSeek lento hay que dejar tiempo al respaldo.
+ */
+export const TIMEOUT_COMANDO_MS = 20_000;
+
+export async function coachCierre(complete: Completer, d: CoachData, timeoutMs?: number): Promise<string> {
   try {
     const r = await complete({
       messages: [
@@ -232,6 +248,7 @@ export async function coachCierre(complete: Completer, d: CoachData): Promise<st
       ],
       maxTokens: 350,
       temperature: 0.7,
+      timeoutMs,
     });
     return sanitizeLlmHtml(r.content) || fallbackCierre(d);
   } catch (e) {
@@ -240,17 +257,17 @@ export async function coachCierre(complete: Completer, d: CoachData): Promise<st
   }
 }
 
-export async function coachSemana(complete: Completer, d: CoachData, historial: string): Promise<string> {
+export async function coachSemana(complete: Completer, d: CoachData, historial: string, timeoutMs = 90_000): Promise<string> {
   try {
     const r = await complete({
       messages: [
         { role: 'system', content: `${SYSTEM_PROMPT}\n\nDATOS:\n${buildContext(d, 'todos')}\n\n${historial}` },
         { role: 'user', content: TAREA_SEMANA },
       ],
-      // La revisión semanal sí usa razonamiento: es 1 llamada por semana.
+      // La revisión semanal sí usa razonamiento: es 1 llamada por semana (~8 s medidos).
       thinking: true,
       maxTokens: 2500,
-      timeoutMs: 90_000,
+      timeoutMs,
     });
     return sanitizeLlmHtml(r.content) || `${fallbackCierre(d)}\n\n${esc(historial)}`;
   } catch (e) {
@@ -264,7 +281,15 @@ export interface ChatTurn {
   content: string;
 }
 
-export type Marcador = (entry: Entry, estado: EstadoKey) => Promise<void>;
+/** Guarda el estado en Notion y devuelve la fila actualizada (para refrescar su tarjeta). */
+export type Marcador = (entry: Entry, estado: EstadoKey) => Promise<Entry | void>;
+
+export interface ChatResult {
+  text: string;
+  marcados: string[];
+  /** Filas guardadas en Notion, tal como quedaron. */
+  actualizadas: Entry[];
+}
 
 export async function coachChat(
   complete: Completer,
@@ -272,8 +297,11 @@ export async function coachChat(
   history: ChatTurn[],
   userText: string,
   marcar: Marcador,
-): Promise<{ text: string; marcados: string[] }> {
-  const marcados: string[] = [];
+  /** Tiempo total para todas las rondas (el webhook tiene 30 s). */
+  presupuestoMs = 60_000,
+): Promise<ChatResult> {
+  const out: ChatResult = { text: '', marcados: [], actualizadas: [] };
+  const limite = Date.now() + presupuestoMs;
   const messages: LlmMessage[] = [
     { role: 'system', content: `${SYSTEM_PROMPT}\n\nDATOS:\n${buildContext(d, 'todos')}\n\n${TAREA_CHAT}` },
     ...history,
@@ -281,28 +309,25 @@ export async function coachChat(
   ];
   try {
     for (let ronda = 0; ronda < 3; ronda++) {
-      const r = await complete({ messages, tools: TOOLS, maxTokens: 400, temperature: 0.6 });
-      if (!r.toolCalls.length) return { text: sanitizeLlmHtml(r.content), marcados };
+      const resta = limite - Date.now();
+      if (resta < 3_000) break;
+      const r = await complete({ messages, tools: TOOLS, maxTokens: 400, temperature: 0.6, timeoutMs: Math.min(15_000, resta) });
+      if (!r.toolCalls.length) return { ...out, text: sanitizeLlmHtml(r.content) };
       messages.push({ role: 'assistant', content: r.content || null, tool_calls: r.toolCalls });
       for (const call of r.toolCalls) {
-        messages.push({ role: 'tool', tool_call_id: call.id, content: await ejecutarTool(call.function, d.entries, marcar, marcados) });
+        messages.push({ role: 'tool', tool_call_id: call.id, content: await ejecutarTool(call.function, d, marcar, out) });
       }
     }
-    return { text: 'Listo. Revisa /hoy para ver cómo quedó tu día.', marcados };
+    return { ...out, text: 'Listo. Revisa /hoy para ver cómo quedó tu día.' };
   } catch (e) {
     console.error('coach chat', e);
-    return { text: 'No pude contactar al coach en este momento. Usa /hoy para registrar con los botones.', marcados };
+    return { ...out, text: 'No pude contactar al coach en este momento. Usa /hoy para registrar con los botones.' };
   }
 }
 
-async function ejecutarTool(
-  fn: { name: string; arguments: string },
-  entries: Entry[],
-  marcar: Marcador,
-  marcados: string[],
-): Promise<string> {
+async function ejecutarTool(fn: { name: string; arguments: string }, d: CoachData, marcar: Marcador, out: ChatResult): Promise<string> {
   if (fn.name !== 'marcar_estado') return `Error: herramienta desconocida ${fn.name}`;
-  let args: { habito?: string; estado?: string };
+  let args: { habito?: string; estado?: string; dia?: string };
   try {
     args = JSON.parse(fn.arguments || '{}');
   } catch {
@@ -310,13 +335,17 @@ async function ejecutarTool(
   }
   const estado = ESTADO_TOOL[args.estado ?? ''];
   if (!estado) return `Error: estado inválido. Usa uno de: ${Object.keys(ESTADO_TOOL).join(', ')}.`;
+  const deAyer = args.dia === 'ayer';
+  if (deAyer && !d.ayer?.length) return 'Error: ya no hay pendientes de ayer que se puedan registrar (el día se cerró a las 03:00).';
+  const entries = deAyer ? d.ayer! : d.entries;
   const entry = matchEntry(entries, args.habito ?? '');
-  if (!entry) return `Error: no encontré un único hábito de hoy llamado «${args.habito}». Opciones: ${entries.map((e) => e.nombre).join('; ')}.`;
+  if (!entry) return `Error: no encontré un único hábito ${deAyer ? 'pendiente de ayer' : 'de hoy'} llamado «${args.habito}». Opciones: ${entries.map((e) => e.nombre).join('; ')}.`;
   try {
-    await marcar(entry, estado);
+    const guardada = await marcar(entry, estado);
     entry.estado = estado;
-    marcados.push(`${ESTADO_BY_KEY[estado].icon} ${entry.nombre}`);
-    return `OK: «${entry.nombre}» quedó como ${ESTADO_BY_KEY[estado].label} en Notion.`;
+    out.actualizadas.push(guardada ?? entry);
+    out.marcados.push(`${ESTADO_BY_KEY[estado].icon} ${entry.nombre}${deAyer ? ' (ayer)' : ''}`);
+    return `OK: «${entry.nombre}» (${deAyer ? 'ayer' : 'hoy'}) quedó como ${ESTADO_BY_KEY[estado].label} en Notion.`;
   } catch (e) {
     return `Error al guardar en Notion: ${String(e).slice(0, 200)}`;
   }

@@ -18,6 +18,8 @@ export interface SlotDef {
   titulo: string;
   intro: string;
   rangos: RangoKey[];
+  /** Último llamado del bloque: solo suena si hay una racha en riesgo. */
+  ultimo?: boolean;
 }
 
 const TODOS: RangoKey[] = ['madrugada', 'manana', 'tarde', 'noche', 'dia'];
@@ -31,6 +33,7 @@ export const SLOTS: Record<SlotKey, SlotDef> = {
   },
   manana_ultimo: {
     tipo: 'aviso',
+    ultimo: true,
     titulo: '⏳ Último llamado de la mañana',
     intro: 'Queda poco del bloque de la mañana. Aún pendiente:',
     rangos: ['madrugada', 'manana'],
@@ -38,11 +41,13 @@ export const SLOTS: Record<SlotKey, SlotDef> = {
   tarde: {
     tipo: 'aviso',
     titulo: '🌆 Bloque de la tarde',
-    intro: 'Lo que toca esta tarde:',
-    rangos: ['tarde'],
+    intro: 'Lo que toca esta tarde (y lo que aún falta de «durante el día»):',
+    // «Durante el día» se recuerda 3 veces: 06:30, 12:30 y 21:30.
+    rangos: ['tarde', 'dia'],
   },
   tarde_ultimo: {
     tipo: 'aviso',
+    ultimo: true,
     titulo: '⏳ Último llamado de la tarde',
     intro: 'Se acaba la tarde. Aún pendiente:',
     rangos: ['tarde'],
@@ -55,6 +60,7 @@ export const SLOTS: Record<SlotKey, SlotDef> = {
   },
   noche_ultimo: {
     tipo: 'aviso',
+    ultimo: true,
     titulo: '⏳ Último llamado del día',
     intro: 'Antes de cerrar el día, aún pendiente:',
     rangos: ['noche', 'dia'],
@@ -93,11 +99,14 @@ export function parseSchedule(raw: string | undefined): Record<SlotKey, number> 
   return out;
 }
 
+/** Minutos durante los que un bloque se puede enviar o reintentar después de su hora. */
+export const VENTANA_MIN = 60;
+
 /**
  * Bloques cuya hora ya pasó hace menos de `windowMin` minutos. La ventana permite
  * recuperar un cron perdido; la deduplicación (no enviar dos veces) va aparte, en KV.
  */
-export function dueSlots(nowMinutes: number, schedule: Record<SlotKey, number>, windowMin = 60): SlotKey[] {
+export function dueSlots(nowMinutes: number, schedule: Record<SlotKey, number>, windowMin = VENTANA_MIN): SlotKey[] {
   return SLOT_KEYS.filter((k) => {
     const t = schedule[k];
     return nowMinutes >= t && nowMinutes < t + windowMin;

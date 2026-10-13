@@ -117,8 +117,9 @@ export async function refreshMatrices(
     try {
       const m = parseMatrix(await collectTables(notion, s.pageId));
       out[s.habitId] = m;
-      // Una matriz vacía también se cachea (más corto) para no releerla en cada ejecución.
-      await kv.put(KEY(s.habitId), JSON.stringify(m), { expirationTtl: isEmptyMatrix(m) ? 86400 : TTL });
+      // Una matriz vacía también se cachea, pero solo 1 hora: puede ser un fallo de lectura o
+      // una Matriz que el usuario está por llenar.
+      await kv.put(KEY(s.habitId), JSON.stringify(m), { expirationTtl: isEmptyMatrix(m) ? 3600 : TTL });
     } catch (e) {
       console.error('matriz', s.habitId, e);
     }

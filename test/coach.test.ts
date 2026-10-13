@@ -204,3 +204,15 @@ describe('complete (proveedor)', () => {
     await expect(complete({ ...baseEnv, LLM_API_KEY: '' } as Env, { messages: [] })).rejects.toThrow(/Sin proveedor/);
   });
 });
+
+describe('contexto: nunca falles dos veces y pendientes de ayer', () => {
+  it('marca el hábito que falló ayer y lista los pendientes de ayer de madrugada', () => {
+    const ctx = buildContext(data({ fallosAyer: ['h-gym'], ayer: [entry({ pageId: 'p-ayer', fecha: '2026-10-11' })] }));
+    expect(ctx).toMatch(/- Ir al gimnasio \|.*\| AYER FALLÓ: no debe fallar dos veces/);
+    expect(ctx).toContain('PENDIENTES DE AYER');
+  });
+  it('sin datos de ayer no agrega nada', () => {
+    const ctx = buildContext(data());
+    expect(ctx).not.toContain('AYER');
+  });
+});

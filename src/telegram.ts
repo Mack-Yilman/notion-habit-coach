@@ -28,49 +28,77 @@ export class Telegram {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async call(method: string, body: Record<string, unknown>): Promise<any> {
+  async call(method: string, body: Record<string, unknown>, intento = 0): Promise<any> {
     const res = await this.fetchFn(`https://api.telegram.org/bot${this.token}/${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const data = (await res.json()) as { ok: boolean; result?: unknown; description?: string };
-    if (!data.ok) throw new TelegramError(res.status, data.description ?? 'error');
+    const data = (await res.json()) as { ok: boolean; result?: unknown; description?: string; parameters?: { retry_after?: number } };
+    if (!data.ok) {
+      // Muchas tarjetas seguidas pueden toparse con el límite de envío del chat: se espera y
+      // se reintenta una vez si la espera es corta.
+      const espera = data.parameters?.retry_after;
+      if (res.status === 429 && espera !== undefined && espera <= 5 && intento === 0) {
+        await new Promise((r) => setTimeout(r, espera * 1000));
+        return this.call(method, body, 1);
+      }
+      throw new TelegramError(res.status, data.description ?? 'error');
+    }
     return data.result;
   }
 
   /** Envía en HTML; si Telegram no puede interpretar las etiquetas, reenvía como texto plano. */
-  async send(chatId: string, text: string, keyboard?: Keyboard): Promise<{ message_id: number }> {
+  async send(chatId: string, text: string, keyboard?: Keyboard, opts: { silent?: boolean } = {}): Promise<{ message_id: number }> {
     const markup = keyboard?.length ? { reply_markup: { inline_keyboard: keyboard } } : {};
+    const extra = { ...markup, ...(opts.silent ? { disable_notification: true } : {}) };
     try {
       return await this.call('sendMessage', {
         chat_id: chatId,
         text,
         parse_mode: 'HTML',
         link_preview_options: { is_disabled: true },
-        ...markup,
+        ...extra,
       });
     } catch (e) {
       if (e instanceof TelegramError && /parse entities/i.test(e.description)) {
-        return this.call('sendMessage', { chat_id: chatId, text: stripTags(text), ...markup });
+        return this.call('sendMessage', { chat_id: chatId, text: stripTags(text), ...extra });
       }
       throw e;
     }
   }
 
-  async edit(chatId: string, messageId: number, text: string, keyboard?: Keyboard): Promise<void> {
+  /** Borra un mensaje del bot. Si ya no existe o pasaron más de 48 h, no es un error. */
+  async deleteMessage(chatId: string, messageId: number): Promise<void> {
     try {
-      await this.call('editMessageText', {
-        chat_id: chatId,
-        message_id: messageId,
-        text,
-        parse_mode: 'HTML',
-        link_preview_options: { is_disabled: true },
-        reply_markup: { inline_keyboard: keyboard ?? [] },
-      });
+      await this.call('deleteMessage', { chat_id: chatId, message_id: messageId });
+    } catch (e) {
+      if (e instanceof TelegramError) return;
+      throw e;
+    }
+  }
+
+  /** Quita los botones de un mensaje (p. ej. uno de una versión anterior del bot). */
+  async clearKeyboard(chatId: string, messageId: number): Promise<void> {
+    try {
+      await this.call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } });
+    } catch (e) {
+      if (e instanceof TelegramError && /not modified/i.test(e.description)) return;
+      throw e;
+    }
+  }
+
+  async edit(chatId: string, messageId: number, text: string, keyboard?: Keyboard): Promise<void> {
+    const base = { chat_id: chatId, message_id: messageId, link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: keyboard ?? [] } };
+    try {
+      await this.call('editMessageText', { ...base, text, parse_mode: 'HTML' });
     } catch (e) {
       // Pulsar dos veces el mismo botón no es un error.
       if (e instanceof TelegramError && /not modified/i.test(e.description)) return;
+      if (e instanceof TelegramError && /parse entities/i.test(e.description)) {
+        await this.call('editMessageText', { ...base, text: stripTags(text) });
+        return;
+      }
       throw e;
     }
   }

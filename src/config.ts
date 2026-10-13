@@ -33,14 +33,16 @@ export interface RangoDef {
   keyword: string;
   icon: string;
   label: string;
+  /** Horario del rango tal como figura en la plantilla (vacío para «Durante el día»). */
+  horas: string;
 }
 
 export const RANGOS: readonly RangoDef[] = [
-  { key: 'madrugada', keyword: '00:00', icon: '🌃', label: 'Madrugada' },
-  { key: 'manana', keyword: '06:00', icon: '☀️', label: 'Mañana' },
-  { key: 'tarde', keyword: '12:00', icon: '🌆', label: 'Tarde' },
-  { key: 'noche', keyword: '18:00', icon: '🌙', label: 'Noche' },
-  { key: 'dia', keyword: 'durante', icon: '❇️', label: 'Durante el día' },
+  { key: 'madrugada', keyword: '00:00', icon: '🌃', label: 'Madrugada', horas: '00:00 a 05:59' },
+  { key: 'manana', keyword: '06:00', icon: '☀️', label: 'Mañana', horas: '06:00 a 11:59' },
+  { key: 'tarde', keyword: '12:00', icon: '🌆', label: 'Tarde', horas: '12:00 a 17:59' },
+  { key: 'noche', keyword: '18:00', icon: '🌙', label: 'Noche', horas: '18:00 a 23:59' },
+  { key: 'dia', keyword: 'durante', icon: '❇️', label: 'Durante el día', horas: '' },
 ];
 
 export const RANGO_BY_KEY = Object.fromEntries(RANGOS.map((r) => [r.key, r])) as Record<RangoKey, RangoDef>;
