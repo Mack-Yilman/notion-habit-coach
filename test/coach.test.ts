@@ -199,6 +199,21 @@ describe('complete (proveedor)', () => {
     const r = await complete({ ...baseEnv, AI } as unknown as Env, { messages: [{ role: 'user', content: 'x' }] }, failFetch);
     expect(r.provider).toBe('workers-ai');
     expect(r.content).toBe('respaldo');
+    // Gemma 4 razona por defecto y, sin esto, gasta max_tokens y devuelve content vacío.
+    expect(AI.run).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ chat_template_kwargs: { enable_thinking: false } }),
+    );
+  });
+  it('Workers AI: lee el formato OpenAI y falla si solo hubo razonamiento', async () => {
+    const failFetch = (async () => new Response('timeout', { status: 504 })) as unknown as typeof fetch;
+    const ok = { run: vi.fn(async () => ({ choices: [{ message: { content: 'gemma', reasoning_content: null } }] })) };
+    const r = await complete({ ...baseEnv, AI: ok } as unknown as Env, { messages: [{ role: 'user', content: 'x' }] }, failFetch);
+    expect(r.content).toBe('gemma');
+    const vacio = { run: vi.fn(async () => ({ choices: [{ finish_reason: 'length', message: { content: '', reasoning_content: 'pienso…' } }] })) };
+    await expect(
+      complete({ ...baseEnv, AI: vacio } as unknown as Env, { messages: [{ role: 'user', content: 'x' }] }, failFetch),
+    ).rejects.toThrow(/respuesta vacía/);
   });
   it('sin clave ni AI lanza error (el llamador usa texto fijo)', async () => {
     await expect(complete({ ...baseEnv, LLM_API_KEY: '' } as Env, { messages: [] })).rejects.toThrow(/Sin proveedor/);

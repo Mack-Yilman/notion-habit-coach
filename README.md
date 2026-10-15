@@ -71,7 +71,7 @@ Para que el chat no se llene, **cada hábito tiene una sola tarjeta viva**: al l
 - **Cloudflare Workers**: Plan gratuito ($0).
 - **Telegram Bot API**: Gratis ($0).
 - **DeepSeek**: Modelo `deepseek-flash` a ~$0.15 por millón de tokens de entrada y ~$0.60 por millón de tokens de salida fuera de hora pico. Representa menos de $0.30 al mes con uso normal; recargar $2 alcanza para meses.
-- **Respaldo gratuito**: Sin clave de DeepSeek o ante fallos, usa Cloudflare Workers AI gratis (modelo Gemma). Si este falla, envía un resumen fijo predeterminado sin IA.
+- **Respaldo gratuito**: Si no hay clave de DeepSeek o si falla, usa Cloudflare Workers AI gratis (modelo Gemma 4, con el razonamiento apagado para que responda rápido y no agote los tokens). Si este también falla, envía un resumen fijo sin IA. En el cierre de las 23:00, el bot espera a DeepSeek hasta 45 s antes de pasar al respaldo.
 
 ## Requisitos
 
@@ -294,7 +294,7 @@ Slots disponibles:
 | No llegan los avisos programados. | No hay hábitos pendientes en ese bloque o el ID de KV `STATE` está mal configurado. | Verifica si hay tareas pendientes en ese bloque y revisa que el `id` en `kv_namespaces` de `wrangler.jsonc` sea el correcto. |
 | La racha no se actualiza. | Faltan las columnas de racha en «Hábitos». | Ejecuta `node scripts/setup.mjs notion --aplicar` para agregarlas automáticamente. |
 | «🩺 Notion no creó las filas de hoy». | Las plantillas de tus hábitos no tienen la repetición diaria activa. | Activa la recurrencia de cada plantilla (ver «Activar recurrencias y agregar hábitos»). |
-| El coach responde con texto fijo. | Cuenta de DeepSeek sin saldo o `LLM_API_KEY` mal configurada. | Revisa tu saldo en DeepSeek y verifica que la clave esté cargada en Cloudflare con `npx wrangler secret bulk .dev.vars`. |
+| El coach responde con texto fijo. | Fallaron DeepSeek y Workers AI: cuenta de DeepSeek sin saldo, `LLM_API_KEY` mal configurada o una caída puntual de ambos. | Revisa tu saldo en DeepSeek y verifica que la clave esté cargada en Cloudflare con `npx wrangler secret bulk .dev.vars`. El aviso «🩺 Revisión del bot» trae el error de cada proveedor. |
 
 ## Privacidad y seguridad
 

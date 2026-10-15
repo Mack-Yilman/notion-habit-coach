@@ -7,6 +7,10 @@
 //   por eso las llamadas con tools van siempre con thinking desactivado.
 // - En thinking, `temperature` se ignora.
 // - El prefijo repetido (prompt de sistema) se cobra como «cache hit», ~50 veces más barato.
+//
+// Nota de Workers AI (Gemma 4, medido 2026-10-15): razona por defecto. Con max_tokens bajo
+// gasta todo en `reasoning_content` y devuelve `content` vacío (finish_reason "length").
+// Por eso el respaldo va siempre con `enable_thinking: false` (~3 s).
 
 import type { Env } from './env';
 
@@ -111,7 +115,11 @@ async function workersAi(env: Env, opts: LlmOptions): Promise<LlmResult> {
     .map((m) => ({ role: m.role === 'tool' ? 'user' : m.role, content: m.content as string }));
   const model = (env.WORKERS_AI_MODEL || '@cf/google/gemma-4-26b-a4b-it') as Parameters<Ai['run']>[0];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const out: any = await env.AI!.run(model, { messages, max_tokens: opts.maxTokens ?? 600 } as never);
+  const out: any = await env.AI!.run(model, {
+    messages,
+    max_tokens: opts.maxTokens ?? 600,
+    chat_template_kwargs: { enable_thinking: false },
+  } as never);
   const content: string = out?.response ?? out?.choices?.[0]?.message?.content ?? '';
   if (!content) throw new Error('Workers AI: respuesta vacía');
   return { content, toolCalls: [], provider: 'workers-ai' };

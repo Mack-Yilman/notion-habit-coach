@@ -239,6 +239,12 @@ export function fallbackCierre(d: CoachData): string {
  */
 export const TIMEOUT_COMANDO_MS = 20_000;
 
+/**
+ * Límite de espera del LLM en el cron: no hay corte a los 30 s, así que DeepSeek tiene más
+ * margen ante una lentitud puntual y aún queda tiempo para el respaldo (Gemma, ~3 s).
+ */
+export const TIMEOUT_CRON_MS = 45_000;
+
 export async function coachCierre(complete: Completer, d: CoachData, timeoutMs?: number): Promise<string> {
   try {
     const r = await complete({

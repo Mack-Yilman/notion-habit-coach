@@ -14,7 +14,7 @@ import {
   type App,
 } from './app';
 import { getCachedMatrices } from './matrix';
-import { buildHistorial, coachCierre, coachSemana } from './coach';
+import { buildHistorial, coachCierre, coachSemana, TIMEOUT_CRON_MS } from './coach';
 import { hasStreakProps, isPending, NOMBRE_PREFIX, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
 import { headerAviso, LEYENDA, renderMapa } from './messages';
 import { dueSlots, SLOTS, VENTANA_MIN, type SlotKey } from './schedule';
@@ -222,7 +222,7 @@ async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {
     texto = await coachSemana(app.llm, data, buildHistorial(hist, desde, app.now.date));
     mapa = renderMapa(hist, desde, app.now.date);
   } else {
-    texto = await coachCierre(app.llm, data);
+    texto = await coachCierre(app.llm, data, TIMEOUT_CRON_MS);
   }
   const titulo = domingo ? '📊 Revisión semanal' : SLOTS.cierre.titulo;
   const pendientes = hoy.filter(isPending);

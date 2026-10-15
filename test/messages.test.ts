@@ -105,6 +105,14 @@ describe('sanitizeLlmHtml', () => {
   it('elimina bloques de razonamiento', () => {
     expect(sanitizeLlmHtml('<think>pienso</think>Respuesta')).toBe('Respuesta');
   });
+  it('convierte listas y párrafos HTML en texto (Telegram no los acepta)', () => {
+    expect(sanitizeLlmHtml('<ul><li>a</li><li>b</li></ul>')).toBe('• a\n• b');
+    // Salida real de Gemma 4 en Workers AI (2026-10-15).
+    const gemma = '<b>¡Bien!</b> 🚀\n\n<ul>\n  <li>Uno.</li>\n  <li>Dos.</li>\n</ul>\n\n<b>¡Mañana más!</b>';
+    expect(sanitizeLlmHtml(gemma)).toBe('<b>¡Bien!</b> 🚀\n\n• Uno.\n• Dos.\n\n<b>¡Mañana más!</b>');
+    expect(sanitizeLlmHtml('<p>Hola</p><p>chau<br/>ya</p>')).toBe('Hola\n\nchau\nya');
+    expect(sanitizeLlmHtml('<pre>x</pre>')).toBe('&lt;pre&gt;x&lt;/pre&gt;');
+  });
 });
 
 describe('nunca falles dos veces (tarjeta)', () => {
