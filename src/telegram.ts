@@ -135,6 +135,13 @@ export function sanitizeLlmHtml(raw: string): string {
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/(^|\s)\*(\S[^*\n]*?)\*(?=\s|$|[.,;:!?])/g, '$1<i>$2</i>')
     .replace(/^#{1,6}\s+/gm, '')
+    // Listas y párrafos HTML (Gemma los usa): Telegram no los acepta, se pasan a texto.
+    .replace(/\s*<li\b[^>]*>\s*/gi, '\n• ')
+    .replace(/<\/li>/gi, '')
+    .replace(/<\/?(ul|ol|p)\b[^>]*>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
   const parts = md.split(/(<[^>]*>)/g);
   const out = parts.map((p) => (p.startsWith('<') && allowed.test(p) ? p.toLowerCase() : esc(p))).join('');

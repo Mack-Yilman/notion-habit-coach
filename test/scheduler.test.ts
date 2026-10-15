@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { closeDays, recalcular, revisarSalud, runScheduled } from '../src/scheduler';
 import { matricesFor, tarjetasABorrar } from '../src/app';
+import { TIMEOUT_CRON_MS } from '../src/coach';
 import { cerrada, fakeApp, num, row } from './fakes';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -340,6 +341,18 @@ describe('alerta del cierre de las 23:00', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toContain('Cierre del día');
     expect(sent[0]!.text).not.toContain('Buenos días');
+  });
+
+  it('el coach del cierre espera hasta TIMEOUT_CRON_MS (en el cron no hay corte a los 30 s)', async () => {
+    // Miércoles 14/10, 23:05 en Lima = 04:05 UTC del 15.
+    const { app } = fakeApp('2026-10-15T04:05:00Z', [row('g14', 'h-gym', 'Gym', '2026-10-14', '🔥 Completo')]);
+    const timeouts: (number | undefined)[] = [];
+    app.llm = (async (o) => {
+      timeouts.push(o.timeoutMs);
+      return { content: 'ok', toolCalls: [], provider: 'openai-compatible' as const };
+    }) as typeof app.llm;
+    await runScheduled(app);
+    expect(timeouts).toEqual([TIMEOUT_CRON_MS]);
   });
 });
 
