@@ -35,13 +35,16 @@ export interface RangoDef {
   label: string;
   /** Horario del rango tal como figura en la plantilla (vacío para «Durante el día»). */
   horas: string;
+  /** Minutos desde medianoche en que empieza y termina el rango («Durante el día» no tiene). */
+  desde?: number;
+  hasta?: number;
 }
 
 export const RANGOS: readonly RangoDef[] = [
-  { key: 'madrugada', keyword: '00:00', icon: '🌃', label: 'Madrugada', horas: '00:00 a 05:59' },
-  { key: 'manana', keyword: '06:00', icon: '☀️', label: 'Mañana', horas: '06:00 a 11:59' },
-  { key: 'tarde', keyword: '12:00', icon: '🌆', label: 'Tarde', horas: '12:00 a 17:59' },
-  { key: 'noche', keyword: '18:00', icon: '🌙', label: 'Noche', horas: '18:00 a 23:59' },
+  { key: 'madrugada', keyword: '00:00', icon: '🌃', label: 'Madrugada', horas: '00:00 a 05:59', desde: 0, hasta: 359 },
+  { key: 'manana', keyword: '06:00', icon: '☀️', label: 'Mañana', horas: '06:00 a 11:59', desde: 360, hasta: 719 },
+  { key: 'tarde', keyword: '12:00', icon: '🌆', label: 'Tarde', horas: '12:00 a 17:59', desde: 720, hasta: 1079 },
+  { key: 'noche', keyword: '18:00', icon: '🌙', label: 'Noche', horas: '18:00 a 23:59', desde: 1080, hasta: 1439 },
   { key: 'dia', keyword: 'durante', icon: '❇️', label: 'Durante el día', horas: '' },
 ];
 

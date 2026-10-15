@@ -8,7 +8,7 @@ import { ESTADO_BY_KEY, RANGO_BY_KEY, normalize, type EstadoKey } from './config
 import { isPending, sortEntries, type Entry, type Stats } from './habits';
 import type { Matrix } from './matrix';
 import { outcomeFromEstado, step } from './streak';
-import { DIAS_LARGOS, weekdayOf } from './time';
+import { addDays, dateRange, DIAS_LARGOS, weekdayOf } from './time';
 import type { LlmMessage, LlmOptions, LlmResult, ToolDef } from './llm';
 import { esc, sanitizeLlmHtml } from './telegram';
 
@@ -20,12 +20,15 @@ export const SYSTEM_PROMPT = `Eres «Coach», el entrenador de hábitos personal
 - Los hábitos se agrupan por rango horario (madrugada, mañana, tarde, noche, durante el día). El usuario es flexible dentro de cada rango: no tiene horas fijas.
 
 Cómo respondes:
-- En español, tuteando, cálido y directo, como un buen entrenador. Sin sermones, sin culpa, sin frases vacías ni motivación genérica.
+- En español, tuteando, con un tono cálido y alentador: estás de su lado. Empieza reconociendo algo concreto y real que sí hizo (de AYER, HOY o ÚLTIMOS 7 DÍAS), con su cifra. Sin sermones, sin culpa, sin frases hechas ni motivación genérica.
 - Usa SOLO lo que está en DATOS. Las cifras ya vienen calculadas: no las recalcules ni inventes otras. Si falta un dato, no lo supongas.
+- Respeta el MOMENTO y la columna «cuándo»: nunca pidas hacer ahora un hábito que «aún no toca»; como mucho, menciónalo como lo próximo. La columna «al cerrar el día» dice qué pasaría con la racha en el cierre de las 03:00, no ahora.
+- Si no hay un riesgo real, no lo inventes: celebra y deja descansar. Si todo va bien, no exijas más.
 - Sé concreto: nombra el hábito y, cuando ayude, cita su Señal o su versión mínima (nivel Parcial del protocolo).
-- Prioriza «nunca falles dos veces» y la versión mínima antes que exigir el 100 %.
+- Ante un fallo, sin culpa: «nunca falles dos veces» y la versión mínima antes que exigir el 100 %.
 - Si un hábito que falla aparece en SIN SEÑAL DEFINIDA, una buena sugerencia es definir su Señal (cuándo y dónde, anclada a algo que ya hace) en la Matriz Atómica de Notion.
-- Formato: HTML de Telegram, solo <b> e <i>. Nada de Markdown, encabezados, tablas ni listas largas. Emojis con moderación.
+- Varía: no repitas aperturas, frases ni ideas de TUS ÚLTIMOS MENSAJES. La frase de identidad es opcional; úsala solo si aporta algo nuevo.
+- Formato: HTML de Telegram, solo <b> e <i>. Nada de Markdown, encabezados, tablas ni listas. Emojis con moderación.
 - Respeta el límite de palabras de la TAREA.`;
 
 export interface CoachData {
@@ -38,6 +41,12 @@ export interface CoachData {
   fallosAyer?: string[];
   /** Pendientes de ayer, solo entre las 00:00 y el cierre de las 03:00. */
   ayer?: Entry[];
+  /** El día anterior aún no se cierra (antes de las 03:00). */
+  ayerAbierto?: boolean;
+  /** Filas de los días anteriores a hoy (al menos los últimos 7, con ayer completo). */
+  semana?: Entry[];
+  /** Últimos mensajes del coach en texto plano, para no repetirse. */
+  ultimos?: string[];
 }
 
 // ---------- Contexto (puro) ----------
@@ -51,7 +60,8 @@ function estadoTxt(e: Entry): string {
 export function proyeccion(e: Entry, st: Stats | undefined): string | null {
   if (!st) return null;
   const r = step(st.state, outcomeFromEstado(e.estado ?? null));
-  if (r.event === 'congelado') return `si queda así, gasta 1 🧊 (quedaría ${r.state.congeladores})`;
+  // Explícito: un modelo leyó «quedaría 0» como racha en 0 cuando eran 0 🧊.
+  if (r.event === 'congelado') return `si queda así, gasta 1 🧊 y conserva la racha de ${st.state.racha} (le quedarían ${r.state.congeladores} 🧊)`;
   if (r.event === 'reinicio')
     return st.state.racha > 0 ? `si queda así, pierde la racha de ${st.state.racha} días (sin 🧊)` : 'si queda así, sigue en 0';
   if (r.event === 'sumo') return `racha sube a ${r.state.racha}${r.ganoCongelador ? ' y gana 1 🧊' : ''}`;
@@ -71,14 +81,119 @@ function matrizTxt(nombre: string, m: Matrix | undefined): string {
   return l.length > 1 ? l.join('\n') : '';
 }
 
+const cumple = (e: Entry) => outcomeFromEstado(e.estado ?? null) === 'done';
+const hhmmDe = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+const minutosDe = (hora: string) => {
+  const [h, m] = hora.split(':').map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+};
+
+export type Momento = 'madrugada' | 'mañana' | 'tarde' | 'noche';
+
+export function momentoDe(min: number): Momento {
+  return min < 360 ? 'madrugada' : min < 720 ? 'mañana' : min < 1080 ? 'tarde' : 'noche';
+}
+
+/** Si el rango del hábito ya empezó, terminó o aún no llega, a esta hora. */
+export function cuandoToca(e: Entry, min: number): string {
+  const r = e.rango ? RANGO_BY_KEY[e.rango] : undefined;
+  if (r?.desde === undefined || r.hasta === undefined) return 'cualquier momento del día';
+  if (min < r.desde) return `aún no toca (desde ${hhmmDe(r.desde)})`;
+  if (min > r.hasta) return 'su rango ya pasó';
+  return 'en su rango ahora';
+}
+
+const aunNoToca = (e: Entry, min: number) => cuandoToca(e, min).startsWith('aún no toca');
+
+function lineaMomento(d: CoachData, min: number): string {
+  const m = momentoDe(min);
+  const base =
+    m === 'madrugada'
+      ? 'madrugada: el día de hoy recién empieza y casi todo «aún no toca»'
+      : m === 'noche'
+        ? 'noche: el día está por terminar'
+        : `${m}: el día está en curso`;
+  return `MOMENTO: ${base}.${d.ayerAbierto ? ' Ayer sigue abierto hasta las 03:00.' : ''}`;
+}
+
+/**
+ * Tendencia de los 7 días anteriores a `hoy`, ya calculada (el modelo no hace cuentas):
+ * días completos seguidos, cumplimiento, hábitos más y menos constantes, recuperaciones y
+ * récords cercanos. Devuelve '' si no hay historia.
+ */
+export function buildTendencia(semana: Entry[], hoy: string, stats: Record<string, Stats> = {}): string {
+  const dias = dateRange(addDays(hoy, -7), addDays(hoy, -1));
+  const filas = semana.filter((e) => e.fecha && dias.includes(e.fecha));
+  if (!filas.length) return '';
+  const pct = (ok: number, tot: number) => `${Math.round((ok / tot) * 100)} % (${ok}/${tot})`;
+  const lines = [`ÚLTIMOS 7 DÍAS (del ${dias[0]} al ${dias[dias.length - 1]}; cumplido = Parcial o mejor):`];
+
+  let seguidos = 0;
+  for (const f of [...dias].reverse()) {
+    const delDia = filas.filter((e) => e.fecha === f);
+    if (!delDia.length || !delDia.every(cumple)) break;
+    seguidos++;
+  }
+  lines.push(`- Días seguidos con todo cumplido, hasta ayer: ${seguidos}`);
+  lines.push(`- Cumplimiento: ${pct(filas.filter(cumple).length, filas.length)}`);
+
+  const porHabito = new Map<string, { nombre: string; serie: Entry[] }>();
+  for (const e of filas) {
+    const k = e.habitId ?? `nombre:${normalize(e.nombre)}`;
+    const h = porHabito.get(k) ?? { nombre: e.nombre, serie: [] };
+    h.serie.push(e);
+    porHabito.set(k, h);
+  }
+  const tasas = [...porHabito.values()]
+    .filter((h) => h.serie.length >= 3)
+    .map((h) => ({ nombre: h.nombre, ok: h.serie.filter(cumple).length, tot: h.serie.length }))
+    .sort((a, b) => b.ok / b.tot - a.ok / a.tot);
+  const mejor = tasas[0];
+  const peor = tasas[tasas.length - 1];
+  if (mejor) lines.push(`- Más constante: ${mejor.nombre} ${pct(mejor.ok, mejor.tot)}`);
+  if (peor && peor !== mejor && peor.ok < peor.tot) lines.push(`- Más flojo: ${peor.nombre} ${pct(peor.ok, peor.tot)}`);
+
+  // Recuperado: ayer cumplió y en los 3 días previos falló alguna vez.
+  const ayer = dias[dias.length - 1]!;
+  const recuperados = [...porHabito.values()]
+    .filter((h) => {
+      const deAyer = h.serie.find((e) => e.fecha === ayer);
+      const previos = h.serie.filter((e) => e.fecha! >= addDays(ayer, -3) && e.fecha! < ayer);
+      return deAyer && cumple(deAyer) && previos.some((e) => !cumple(e));
+    })
+    .map((h) => h.nombre);
+  if (recuperados.length) lines.push(`- Se recuperó tras fallar: ${recuperados.join('; ')}`);
+
+  const records = Object.values(stats)
+    .filter((s) => s.state.racha >= 3 && s.state.mejor - s.state.racha <= 2)
+    .map((s) =>
+      s.state.racha >= s.state.mejor
+        ? `${s.nombre} está en su mejor racha (${s.state.racha})`
+        : `${s.nombre} a ${s.state.mejor - s.state.racha} de su mejor racha (${s.state.mejor})`,
+    );
+  if (records.length) lines.push(`- Récords: ${records.join('; ')}`);
+  return lines.join('\n');
+}
+
 export function buildContext(d: CoachData, matrizPara: 'pendientes' | 'todos' | string[] = 'pendientes'): string {
   const entries = sortEntries(d.entries);
   const dia = DIAS_LARGOS[weekdayOf(d.fecha)];
-  const lines = [`FECHA: ${dia} ${d.fecha}, ${d.hora} (hora local)`];
+  const min = minutosDe(d.hora);
+  const lines = [`FECHA: ${dia} ${d.fecha}, ${d.hora} (hora local)`, lineaMomento(d, min)];
+
+  const fechaAyer = addDays(d.fecha, -1);
+  const deAyer = (d.semana ?? []).filter((e) => e.fecha === fechaAyer);
+  if (deAyer.length) {
+    const fallas = deAyer.filter((e) => !cumple(e)).map((e) => e.nombre);
+    lines.push(
+      `AYER (${DIAS_LARGOS[weekdayOf(fechaAyer)]} ${fechaAyer}): ${deAyer.length - fallas.length} de ${deAyer.length} hábitos con Parcial o mejor.` +
+        (fallas.length ? ` Sin cumplir: ${fallas.join('; ')}.` : ''),
+    );
+  }
 
   const hechos = entries.filter((e) => e.estado && ESTADO_BY_KEY[e.estado].cuenta).length;
   lines.push(`HOY: ${hechos} de ${entries.length} hábitos con Parcial o mejor; ${entries.filter(isPending).length} sin registrar.`);
-  lines.push('', 'HÁBITOS DE HOY (nombre | rango | objetivo | estado | racha | 🧊 | proyección):');
+  lines.push('', 'HÁBITOS DE HOY (nombre | rango | cuándo | objetivo | estado | racha | 🧊 | al cerrar el día):');
   for (const e of entries) {
     const st = e.habitId ? d.stats[e.habitId] : undefined;
     const racha = st ? `racha ${st.state.racha} (mejor ${st.state.mejor})` : 'racha ?';
@@ -87,12 +202,16 @@ export function buildContext(d: CoachData, matrizPara: 'pendientes' | 'todos' | 
     const rango = e.rango ? RANGO_BY_KEY[e.rango].label : 'sin rango';
     const ident = e.identidad ? ` | identidad: ${e.identidad}` : '';
     const fallo = e.habitId && d.fallosAyer?.includes(e.habitId) ? ' | AYER FALLÓ: no debe fallar dos veces' : '';
-    lines.push(`- ${e.nombre} | ${rango} | ${e.objetivo || 'sin objetivo'} | ${estadoTxt(e)} | ${racha} | ${hielo} | ${proy}${ident}${fallo}`);
+    lines.push(`- ${e.nombre} | ${rango} | ${cuandoToca(e, min)} | ${e.objetivo || 'sin objetivo'} | ${estadoTxt(e)} | ${racha} | ${hielo} | ${proy}${ident}${fallo}`);
   }
   if (d.ayer?.length) {
     lines.push('', 'PENDIENTES DE AYER (aún se pueden registrar con dia="ayer"; el día se cierra a las 03:00):');
     for (const e of d.ayer) lines.push(`- ${e.nombre} | ${e.rango ? RANGO_BY_KEY[e.rango].label : 'sin rango'} | ${e.objetivo || 'sin objetivo'}`);
+  } else if (d.ayerAbierto && deAyer.length) {
+    lines.push('', 'PENDIENTES DE AYER: ninguno, ayer quedó todo registrado.');
   }
+  const tendencia = d.semana?.length ? buildTendencia(d.semana, d.fecha, d.stats) : '';
+  if (tendencia) lines.push('', tendencia);
 
   const elegidos = entries.filter((e) =>
     matrizPara === 'todos' ? true : matrizPara === 'pendientes' ? isPending(e) || e.estado === 'omitido' : matrizPara.includes(e.nombre),
@@ -103,6 +222,9 @@ export function buildContext(d: CoachData, matrizPara: 'pendientes' | 'todos' | 
   if (matrices.length) lines.push('', 'MATRIZ ATÓMICA Y PROTOCOLO:', ...matrices);
   const sinSenal = elegidos.filter((e) => e.habitId && d.matrices[e.habitId] && !d.matrices[e.habitId]!.senal).map((e) => e.nombre);
   if (sinSenal.length) lines.push('', `SIN SEÑAL DEFINIDA EN SU MATRIZ: ${sinSenal.join('; ')}`);
+  if (d.ultimos?.length) {
+    lines.push('', 'TUS ÚLTIMOS MENSAJES (no repitas aperturas, frases ni ideas):', ...d.ultimos.map((t) => `- «${t.slice(0, 250)}»`));
+  }
   return lines.join('\n');
 }
 
@@ -158,10 +280,14 @@ export function buildHistorial(historial: Entry[], desde: string, hasta: string)
 // ---------- Tareas ----------
 
 export const TAREA_CIERRE = `TAREA: mensaje de cierre del día, máximo 110 palabras.
-1) Cómo fue el día, con la cifra de HOY.
-2) Qué racha está en riesgo esta noche y qué se perdería (usa la proyección). Si no hay riesgo, celebra la más larga.
-3) UNA sola acción concreta: para lo que aún se puede salvar hoy, la versión mínima; si ya no, cómo empezar mañana usando su Señal.
-Termina con una frase corta de identidad.`;
+1) Reconoce lo mejor del día con la cifra de HOY y, si suma, algo de ÚLTIMOS 7 DÍAS (días completos seguidos, un récord, una recuperación).
+2) Si queda un pendiente que aún se puede registrar antes de las 03:00 y su columna «al cerrar el día» dice que gasta 🧊 o pierde la racha, nómbralo, di qué se perdería y propone su versión mínima. Si no hay riesgo, no lo inventes.
+3) Cierra con una línea breve y cálida para descansar o para empezar mañana.`;
+
+export const TAREA_RESUMEN = `TAREA: resumen que el usuario pidió con /resumen, máximo 100 palabras. Adáptalo al MOMENTO:
+- Madrugada: el día de hoy aún no empieza. Haz el balance de AYER y celebra lo logrado. Si PENDIENTES DE AYER lista hábitos, nómbralos: aún se pueden registrar antes de las 03:00, con su versión mínima; si dice «ninguno», no hables de pendientes. No menciones los hábitos de hoy salvo los que estén «en su rango ahora». Invita a descansar.
+- Mañana o tarde: cómo va el día (cifra de HOY) y lo próximo que toca según «cuándo», con su versión mínima si ayuda. Sin alarmas por hábitos que aún no tocan.
+- Noche: lo logrado hoy, el riesgo real de esta noche si lo hay (columna «al cerrar el día») y una acción concreta.`;
 
 export const TAREA_SEMANA = `TAREA: revisión semanal, máximo 200 palabras.
 1) El logro principal de estos días.
@@ -220,8 +346,9 @@ export type Completer = (opts: LlmOptions) => Promise<LlmResult>;
 export function fallbackCierre(d: CoachData): string {
   const entries = sortEntries(d.entries);
   const hechos = entries.filter((e) => e.estado && ESTADO_BY_KEY[e.estado].cuenta).length;
+  const min = minutosDe(d.hora);
   const riesgos = entries
-    .filter(isPending)
+    .filter((e) => isPending(e) && !aunNoToca(e, min))
     .map((e) => {
       const p = proyeccion(e, e.habitId ? d.stats[e.habitId] : undefined);
       return `• ${esc(e.nombre)}${p ? ` — ${esc(p)}` : ''}`;
@@ -245,12 +372,13 @@ export const TIMEOUT_COMANDO_MS = 20_000;
  */
 export const TIMEOUT_CRON_MS = 45_000;
 
-export async function coachCierre(complete: Completer, d: CoachData, timeoutMs?: number): Promise<string> {
+/** Cierre de las 23:00 o, con `TAREA_RESUMEN`, el resumen de /resumen a cualquier hora. */
+export async function coachCierre(complete: Completer, d: CoachData, timeoutMs?: number, tarea = TAREA_CIERRE): Promise<string> {
   try {
     const r = await complete({
       messages: [
         { role: 'system', content: `${SYSTEM_PROMPT}\n\nDATOS:\n${buildContext(d)}` },
-        { role: 'user', content: TAREA_CIERRE },
+        { role: 'user', content: tarea },
       ],
       maxTokens: 350,
       temperature: 0.7,

@@ -2,11 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildContext,
   buildHistorial,
+  buildTendencia,
   coachChat,
   coachCierre,
+  cuandoToca,
+  fallbackCierre,
   matchEntry,
+  momentoDe,
   proyeccion,
   SYSTEM_PROMPT,
+  TAREA_RESUMEN,
   type CoachData,
   type Completer,
 } from '../src/coach';
@@ -43,7 +48,7 @@ const data = (over: Partial<CoachData> = {}): CoachData => ({
 
 describe('proyeccion', () => {
   it('avisa que se gastará un congelador', () => {
-    expect(proyeccion(entry(), stats(5, 1))).toContain('gasta 1 🧊 (quedaría 0)');
+    expect(proyeccion(entry(), stats(5, 1))).toBe('si queda así, gasta 1 🧊 y conserva la racha de 5 (le quedarían 0 🧊)');
   });
   it('avisa que se pierde la racha sin congeladores', () => {
     expect(proyeccion(entry(), stats(5, 0))).toContain('pierde la racha de 5 días');
@@ -229,5 +234,69 @@ describe('contexto: nunca falles dos veces y pendientes de ayer', () => {
   it('sin datos de ayer no agrega nada', () => {
     const ctx = buildContext(data());
     expect(ctx).not.toContain('AYER');
+  });
+});
+
+describe('contexto según la hora, ayer y la semana', () => {
+  const dientes = (fecha: string, estado: Entry['estado']) =>
+    entry({ pageId: `d-${fecha}`, nombre: 'Cepillarme los dientes en la noche', rango: 'noche', habitId: 'h-dientes', fecha, estado });
+  const agua = (fecha: string, estado: Entry['estado']) => entry({ pageId: `a-${fecha}`, nombre: 'Tomar agua', rango: 'dia', habitId: 'h-agua', fecha, estado });
+  const semana = ['2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14'].flatMap((f) => [
+    dientes(f, f === '2026-10-12' ? 'sin_iniciar' : 'hecho'),
+    agua(f, 'hecho'),
+  ]);
+  const madrugada = (): CoachData => ({
+    fecha: '2026-10-15',
+    hora: '00:49',
+    entries: [dientes('2026-10-15', 'sin_iniciar'), agua('2026-10-15', 'sin_iniciar')],
+    stats: { 'h-dientes': { habitId: 'h-dientes', nombre: 'Cepillarme los dientes en la noche', state: { racha: 2, mejor: 4, congeladores: 1, procesadoHasta: '2026-10-14' } } },
+    matrices: {},
+    ayerAbierto: true,
+    semana,
+  });
+
+  it('momentoDe y cuandoToca', () => {
+    expect(momentoDe(49)).toBe('madrugada');
+    expect(momentoDe(23 * 60)).toBe('noche');
+    expect(cuandoToca(dientes('x', null), 49)).toBe('aún no toca (desde 18:00)');
+    expect(cuandoToca(dientes('x', null), 19 * 60)).toBe('en su rango ahora');
+    expect(cuandoToca(entry({ rango: 'manana' }), 23 * 60)).toBe('su rango ya pasó');
+    expect(cuandoToca(agua('x', null), 49)).toBe('cualquier momento del día');
+  });
+
+  it('de madrugada marca lo de hoy como «aún no toca» y trae el balance de ayer', () => {
+    const ctx = buildContext(madrugada());
+    expect(ctx).toContain('MOMENTO: madrugada');
+    expect(ctx).toContain('Ayer sigue abierto hasta las 03:00');
+    expect(ctx).toContain('AYER (miércoles 2026-10-14): 2 de 2 hábitos con Parcial o mejor.');
+    expect(ctx).toMatch(/Cepillarme los dientes en la noche \| Noche \| aún no toca \(desde 18:00\)/);
+  });
+
+  it('la tendencia trae días completos seguidos, recuperación y récords', () => {
+    const t = buildTendencia(semana, '2026-10-15', {
+      'h-agua': { habitId: 'h-agua', nombre: 'Tomar agua', state: { racha: 9, mejor: 9, congeladores: 2, procesadoHasta: '2026-10-14' } },
+    });
+    expect(t).toContain('Días seguidos con todo cumplido, hasta ayer: 2');
+    expect(t).toContain('Cumplimiento: 93 % (13/14)');
+    expect(t).toContain('Más constante: Tomar agua 100 % (7/7)');
+    expect(t).toContain('Más flojo: Cepillarme los dientes en la noche 86 % (6/7)');
+    expect(t).toContain('Se recuperó tras fallar: Cepillarme los dientes en la noche');
+    expect(t).toContain('Tomar agua está en su mejor racha (9)');
+    expect(buildTendencia([], '2026-10-15')).toBe('');
+  });
+
+  it('incluye los últimos mensajes para no repetirse', () => {
+    const ctx = buildContext({ ...madrugada(), ultimos: ['Cada repetición es un voto por tu Cuerpo limpio'] });
+    expect(ctx).toContain('TUS ÚLTIMOS MENSAJES');
+    expect(ctx).toContain('«Cada repetición es un voto por tu Cuerpo limpio»');
+  });
+
+  it('/resumen usa su propia tarea y el resumen sin IA no alarma por lo que aún no toca', async () => {
+    const llm = vi.fn<Completer>(async () => ({ content: 'ok', toolCalls: [], provider: 'openai-compatible' as const }));
+    await coachCierre(llm, madrugada(), undefined, TAREA_RESUMEN);
+    expect(llm.mock.calls[0]![0].messages[1]!.content).toBe(TAREA_RESUMEN);
+    const sinIa = fallbackCierre(madrugada());
+    expect(sinIa).not.toContain('Cepillarme');
+    expect(sinIa).toContain('Tomar agua');
   });
 });

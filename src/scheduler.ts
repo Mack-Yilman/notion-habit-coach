@@ -7,6 +7,7 @@ import {
   coachData,
   enviarTarjetas,
   fallosKey,
+  guardarUltimo,
   llmFallaKey,
   loadStats,
   matricesFor,
@@ -211,19 +212,21 @@ export function lineaRiesgo(riesgo: { nombre: string; racha: number }[]): string
 }
 
 async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {
-  const data = await coachData(app, hoy);
   const domingo = app.now.weekday === 0;
+  const schema = await getSchema(app);
+  // Historia para el contexto del coach: 14 días el domingo (la revisión los usa), 7 los demás.
+  const desde = addDays(app.now.date, domingo ? -13 : -7);
+  const hist = await fetchRange(app, schema, desde, domingo ? app.now.date : addDays(app.now.date, -1), domingo ? 3 : 2);
+  const data = await coachData(app, hoy, { historia: hist.filter((e) => e.fecha !== app.now.date) });
   let texto: string;
   let mapa = '';
   if (domingo) {
-    const schema = await getSchema(app);
-    const desde = addDays(app.now.date, -13);
-    const hist = await fetchRange(app, schema, desde, app.now.date, 3);
     texto = await coachSemana(app.llm, data, buildHistorial(hist, desde, app.now.date));
     mapa = renderMapa(hist, desde, app.now.date);
   } else {
     texto = await coachCierre(app.llm, data, TIMEOUT_CRON_MS);
   }
+  await guardarUltimo(app, texto);
   const titulo = domingo ? '📊 Revisión semanal' : SLOTS.cierre.titulo;
   const pendientes = hoy.filter(isPending);
   const pie = pendientes.length ? `\n\n<b>Aún puedes registrar (hasta las 03:00):</b>` : '';

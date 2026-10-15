@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ajustarConAyer,
   estadoProperty,
   isPending,
   parseEntry,
@@ -154,5 +155,27 @@ describe('rachas en las filas diarias', () => {
   it('statsFromEntries toma la fila más reciente y la fecha de la última cerrada', () => {
     const st = statsFromEntries([conRacha('2026-10-13', 5, false), conRacha('2026-10-12', 5, true), conRacha('2026-10-11', 4, true)]);
     expect(st['habit-gym']!.state).toEqual({ racha: 5, mejor: 5, congeladores: 1, procesadoHasta: '2026-10-12' });
+  });
+});
+
+describe('ajustarConAyer (racha de madrugada, antes del cierre de las 03:00)', () => {
+  const st = (procesadoHasta: string | null) => ({
+    h1: { habitId: 'h1', nombre: 'Dientes', state: { racha: 1, mejor: 4, congeladores: 1, procesadoHasta } },
+  });
+  const fila = (estado: any, fecha = '2026-10-14') =>
+    ({ pageId: 'p', nombre: 'Dientes', estado, fecha, rango: 'noche', objetivo: '', identidad: '', habitId: 'h1' }) as any;
+
+  it('suma lo cumplido ayer aunque el cierre aún no lo cuente', () => {
+    const r = ajustarConAyer(st('2026-10-13'), [fila('hecho')], '2026-10-14');
+    expect(r.h1!.state).toMatchObject({ racha: 2, congeladores: 1, procesadoHasta: '2026-10-14' });
+  });
+  it('un pendiente de ayer no cambia nada: todavía se puede salvar', () => {
+    expect(ajustarConAyer(st('2026-10-13'), [fila('sin_iniciar')], '2026-10-14').h1!.state.racha).toBe(1);
+    expect(ajustarConAyer(st('2026-10-13'), [fila('omitido')], '2026-10-14').h1!.state.racha).toBe(1);
+  });
+  it('no cuenta dos veces ni toca un estado sin fecha de proceso', () => {
+    expect(ajustarConAyer(st('2026-10-14'), [fila('hecho')], '2026-10-14').h1!.state.racha).toBe(1);
+    expect(ajustarConAyer(st(null), [fila('hecho')], '2026-10-14').h1!.state.racha).toBe(1);
+    expect(ajustarConAyer(st('2026-10-13'), [fila('hecho', '2026-10-12')], '2026-10-14').h1!.state.racha).toBe(1);
   });
 });

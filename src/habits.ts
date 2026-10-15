@@ -18,7 +18,7 @@ import {
   type RangoKey,
 } from './config';
 import { plain, type Json } from './notion';
-import type { StreakState } from './streak';
+import { outcomeFromEstado, step, type StreakState } from './streak';
 
 export interface HabitosSchema {
   dataSourceId: string;
@@ -208,6 +208,24 @@ export function statsFromEntries(entries: Entry[]): Record<string, Stats> {
       nombre: e.nombre,
       state: { racha: s.racha, mejor: s.mejor, congeladores: s.congeladores, procesadoHasta: s.cerrada ? e.fecha : (out[e.habitId!]?.state.procesadoHasta ?? null) },
     };
+  }
+  return out;
+}
+
+/**
+ * Entre las 00:00 y el cierre de las 03:00, el día anterior aún no está contado en la racha.
+ * Suma lo que ya se cumplió ayer para que el coach no hable de una racha atrasada. Solo
+ * los cumplidos: un pendiente de ayer todavía se puede salvar. Es solo para mostrar: la
+ * racha guardada la sigue escribiendo el cierre de las 03:00.
+ */
+export function ajustarConAyer(stats: Record<string, Stats>, filas: Entry[], fechaAyer: string): Record<string, Stats> {
+  const out = { ...stats };
+  for (const e of filas) {
+    if (!e.habitId || e.fecha !== fechaAyer || outcomeFromEstado(e.estado ?? null) !== 'done') continue;
+    const st = out[e.habitId];
+    // Sin fecha de proceso no se sabe si ayer ya cuenta: mejor no tocarla.
+    if (!st?.state.procesadoHasta || st.state.procesadoHasta >= fechaAyer) continue;
+    out[e.habitId] = { ...st, state: { ...step(st.state, 'done').state, procesadoHasta: fechaAyer } };
   }
   return out;
 }
