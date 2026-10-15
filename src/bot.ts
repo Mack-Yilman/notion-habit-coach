@@ -6,10 +6,11 @@ import {
   fetchDay,
   enviarTarjetas,
   MATRICES_POR_COMANDO,
-  fetchRange,
+  filasConHistoria,
   getFallosAyer,
   getMsgContext,
   getSchema,
+  guardarUltimo,
   loadStats,
   matricesFor,
   pendientesDeAyer,
@@ -17,7 +18,7 @@ import {
   type App,
 } from './app';
 import { decodeCallback } from './callback';
-import { buildHistorial, coachChat, coachCierre, coachSemana, TIMEOUT_COMANDO_MS, type ChatTurn } from './coach';
+import { buildHistorial, coachChat, coachCierre, coachSemana, TAREA_RESUMEN, TIMEOUT_COMANDO_MS, type ChatTurn } from './coach';
 import { ESTADO_BY_KEY } from './config';
 import { estadoProperty, isPending, parseEntry, type Entry } from './habits';
 import { clearMatrices } from './matrix';
@@ -174,17 +175,21 @@ async function enviarRachas(app: App): Promise<void> {
 async function enviarResumen(app: App, semanal: boolean): Promise<void> {
   await app.tg.typing(app.chatId);
   const schema = await getSchema(app);
-  const hoy = await fetchDay(app, schema, app.now.date);
-  const data = await coachData(app, hoy);
+  // Una sola consulta trae hoy y la historia (14 días para la revisión, 7 para el resumen).
+  const dias = semanal ? 13 : 7;
+  const { hoy, historia, todas } = await filasConHistoria(app, schema, dias, semanal ? 3 : 2);
+  const ayer = await pendientesDeAyer(app, schema, historia);
+  const data = await coachData(app, hoy, { ayer, historia });
   let texto: string;
   if (semanal) {
-    const desde = addDays(app.now.date, -13);
-    const hist = await fetchRange(app, schema, desde, app.now.date, 3);
-    texto = await coachSemana(app.llm, data, buildHistorial(hist, desde, app.now.date), TIMEOUT_COMANDO_MS);
-    const mapa = renderMapa(hist, desde, app.now.date);
+    const desde = addDays(app.now.date, -dias);
+    texto = await coachSemana(app.llm, data, buildHistorial(todas, desde, app.now.date), TIMEOUT_COMANDO_MS);
+    await guardarUltimo(app, texto);
+    const mapa = renderMapa(todas, desde, app.now.date);
     if (mapa) texto += `\n\n${mapa}`;
   } else {
-    texto = await coachCierre(app.llm, data, TIMEOUT_COMANDO_MS);
+    texto = await coachCierre(app.llm, data, TIMEOUT_COMANDO_MS, TAREA_RESUMEN);
+    await guardarUltimo(app, texto);
   }
   await app.tg.send(app.chatId, `<b>${semanal ? '📊 Revisión' : '🧭 Resumen'}</b> · ${formatCorto(app.now.date)}\n\n${texto}`);
 }
@@ -221,8 +226,10 @@ async function chat(app: App, text: string): Promise<void> {
   }
   await app.tg.typing(app.chatId);
   const schema = await getSchema(app);
-  const [hoy, ayer] = await Promise.all([fetchDay(app, schema, app.now.date), pendientesDeAyer(app, schema)]);
-  const data = await coachData(app, hoy, ayer);
+  // Una sola consulta: hoy, los pendientes de ayer y la semana para el contexto.
+  const { hoy, historia } = await filasConHistoria(app, schema);
+  const ayer = await pendientesDeAyer(app, schema, historia);
+  const data = await coachData(app, hoy, { ayer, historia });
   const history = (await app.kv.get<ChatTurn[]>(HIST_KEY, 'json')) ?? [];
 
   const r = await coachChat(

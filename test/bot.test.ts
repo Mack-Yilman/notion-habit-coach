@@ -74,3 +74,35 @@ describe('madrugada (00:00 a 03:00): el día anterior sigue abierto', () => {
     expect(tgCalls.find((c) => c.method === 'edit' && c.mid === 9)!.text).toContain('<i>Hecho</i>');
   });
 });
+
+describe('/resumen de madrugada', () => {
+  it('cuenta lo de ayer en la racha, usa la tarea del resumen y recuerda sus últimos mensajes', async () => {
+    // 2026-10-15 00:49 en Lima = 05:49 UTC. El snapshot de rachas es el del cierre del 13/10.
+    const { app, sent, kv } = fakeApp('2026-10-15T05:49:00Z', [
+      row('d13', 'h-d', 'Dientes', '2026-10-13', '⚡ Hecho'),
+      row('d14', 'h-d', 'Dientes', '2026-10-14', '⚡ Hecho'),
+      row('d15', 'h-d', 'Dientes', '2026-10-15', '⚪ Sin iniciar'),
+    ]);
+    kv.m.set(
+      'stats:snapshot',
+      JSON.stringify([{ habitId: 'h-d', nombre: 'Dientes', state: { racha: 1, mejor: 1, congeladores: 1, procesadoHasta: '2026-10-13' } }]),
+    );
+    const prompts: string[] = [];
+    app.llm = async (o) => {
+      prompts.push(o.messages.map((m) => m.content).join('\n'));
+      return { content: `Mensaje ${prompts.length}`, toolCalls: [], provider: 'openai-compatible' as const };
+    };
+    await handleUpdate(app, escribir('/resumen'));
+    expect(prompts[0]).toContain('TAREA: resumen que el usuario pidió con /resumen');
+    expect(prompts[0]).toContain('MOMENTO: madrugada');
+    expect(prompts[0]).toContain('AYER (miércoles 2026-10-14): 1 de 1');
+    expect(prompts[0]).toContain('aún no toca (desde 06:00)');
+    expect(prompts[0]).toContain('racha 2 (mejor 2)');
+    expect(prompts[0]).not.toContain('TUS ÚLTIMOS MENSAJES (no repitas');
+    expect(sent[0]!.text).toContain('Mensaje 1');
+
+    await handleUpdate(app, escribir('/resumen'));
+    expect(prompts[1]).toContain('«Mensaje 1»');
+    expect(JSON.parse(kv.m.get('coach:ultimos')!)).toEqual(['Mensaje 1', 'Mensaje 2']);
+  });
+});

@@ -1,13 +1,24 @@
 // Contexto por invocación (nunca estado global) y accesos a Notion con caché en KV.
 
 import type { Env } from './env';
-import { hasStreakProps, isPending, parseEntry, resolveHabitosSchema, sortEntries, statsFromEntries, type Entry, type HabitosSchema, type Stats } from './habits';
+import {
+  ajustarConAyer,
+  hasStreakProps,
+  isPending,
+  parseEntry,
+  resolveHabitosSchema,
+  sortEntries,
+  statsFromEntries,
+  type Entry,
+  type HabitosSchema,
+  type Stats,
+} from './habits';
 import { complete, type LlmOptions } from './llm';
 import { getCachedMatrices, refreshMatrices, type Matrix } from './matrix';
 import { renderCard, type ExtrasCard } from './messages';
 import { Notion } from './notion';
 import { parseSchedule, type SlotKey } from './schedule';
-import { Telegram } from './telegram';
+import { stripTags, Telegram } from './telegram';
 import { addDays, localNow, type LocalNow } from './time';
 import type { CoachData } from './coach';
 
@@ -131,19 +142,71 @@ export async function matricesFor(app: App, entries: Entry[], refreshMax = 0): P
 /** Cuántas Matrices leer de una vez en un comando (~6 llamadas a Notion cada una; límite 50). */
 export const MATRICES_POR_COMANDO = 4;
 
-export async function coachData(app: App, entries: Entry[], ayer: Entry[] = []): Promise<CoachData> {
-  const [stats, matrices, fallosAyer] = await Promise.all([loadStats(app, entries), matricesFor(app, [...entries, ...ayer]), getFallosAyer(app)]);
-  return { fecha: app.now.date, hora: hhmm(app), entries, stats, matrices, fallosAyer, ...(ayer.length ? { ayer } : {}) };
+export async function coachData(app: App, entries: Entry[], opts: { ayer?: Entry[]; historia?: Entry[] } = {}): Promise<CoachData> {
+  const ayer = opts.ayer ?? [];
+  const [base, matrices, fallosAyer, ultimos] = await Promise.all([
+    loadStats(app, entries),
+    matricesFor(app, [...entries, ...ayer]),
+    getFallosAyer(app),
+    getUltimos(app),
+  ]);
+  const abierto = ayerAbierto(app);
+  // De madrugada, la racha guardada aún no cuenta lo cumplido ayer.
+  const stats = abierto && opts.historia ? ajustarConAyer(base, opts.historia, addDays(app.now.date, -1)) : base;
+  return {
+    fecha: app.now.date,
+    hora: hhmm(app),
+    entries,
+    stats,
+    matrices,
+    fallosAyer,
+    ultimos,
+    ayerAbierto: abierto,
+    ...(ayer.length ? { ayer } : {}),
+    ...(opts.historia ? { semana: opts.historia } : {}),
+  };
 }
 
 export async function getFallosAyer(app: App): Promise<string[]> {
   return (await app.kv.get<string[]>(fallosKey(app.now.date), 'json')) ?? [];
 }
 
-/** Entre las 00:00 y el cierre (03:00) el día anterior sigue abierto: sus pendientes. */
-export async function pendientesDeAyer(app: App, s: HabitosSchema): Promise<Entry[]> {
-  if (app.now.minutes >= app.schedule.procesar) return [];
-  return (await fetchDay(app, s, addDays(app.now.date, -1))).filter(isPending);
+/** Entre las 00:00 y el cierre (03:00) el día anterior sigue abierto. */
+export function ayerAbierto(app: App): boolean {
+  return app.now.minutes < app.schedule.procesar;
+}
+
+/** Pendientes de ayer mientras sigue abierto. Con `historia` ya leída no consulta Notion. */
+export async function pendientesDeAyer(app: App, s: HabitosSchema, historia?: Entry[]): Promise<Entry[]> {
+  if (!ayerAbierto(app)) return [];
+  const fecha = addDays(app.now.date, -1);
+  const filas = historia ? historia.filter((e) => e.fecha === fecha) : await fetchDay(app, s, fecha);
+  return filas.filter(isPending);
+}
+
+/**
+ * Hoy y los `dias` anteriores en una sola consulta a Notion (de la más reciente a la más
+ * antigua: si el tope de páginas corta, se pierden los días viejos, nunca hoy).
+ */
+export async function filasConHistoria(app: App, s: HabitosSchema, dias = 7, maxPages = 2): Promise<{ hoy: Entry[]; historia: Entry[]; todas: Entry[] }> {
+  const todas = await fetchRange(app, s, addDays(app.now.date, -dias), app.now.date, maxPages);
+  return { hoy: todas.filter((e) => e.fecha === app.now.date), historia: todas.filter((e) => e.fecha !== app.now.date), todas };
+}
+
+// ---------- Memoria corta del coach ----------
+
+const ULTIMOS_KEY = 'coach:ultimos';
+
+export async function getUltimos(app: App): Promise<string[]> {
+  return (await app.kv.get<string[]>(ULTIMOS_KEY, 'json')) ?? [];
+}
+
+/** Guarda el texto de un cierre o resumen (los últimos 3) para que el coach no se repita. */
+export async function guardarUltimo(app: App, html: string): Promise<void> {
+  const txt = stripTags(html).replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (!txt) return;
+  const prev = await getUltimos(app);
+  await app.kv.put(ULTIMOS_KEY, JSON.stringify([...prev, txt].slice(-3)), { expirationTtl: 7 * 86400 });
 }
 
 /** Lo que muestra una tarjeta pendiente además del hábito: Señal, «nunca falles dos veces» y mínimo. */

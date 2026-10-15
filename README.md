@@ -13,12 +13,12 @@ Bot de Telegram con coach de IA que hace accionable tu plantilla Habit Tracker P
   - 🚀 **Alto impacto**
 - **Rachas inteligentes**: Sistema de rachas con 2 congeladores por hábito para proteger tu constancia ante imprevistos.
 - **Nunca falles dos veces**: si un hábito falló ayer, su tarjeta de hoy lo marca con «⚠️ Ayer no salió: no falles dos veces» y te propone su versión mínima (el nivel 🕯️ Parcial de su Protocolo), para no encadenar dos fallos.
-- **Coach de IA**: Cierre diario nocturno, revisión semanal los domingos (con un mapa de 14 días en emojis) y modo de chat libre que comprende lenguaje natural y puede registrar hábitos automáticamente (por ejemplo: «ya fui al gym»).
+- **Coach de IA**: Cierre diario nocturno, `/resumen` a cualquier hora, revisión semanal los domingos (con un mapa de 14 días en emojis) y modo de chat libre que comprende lenguaje natural y puede registrar hábitos automáticamente (por ejemplo: «ya fui al gym»). Su tono es cálido y alentador: empieza por lo que sí hiciste. Sabe qué hora es y qué hábitos aún no tocan, por lo que de madrugada hace el balance de ayer en vez de pedirte algo de la noche. También conoce tus últimos 7 días (días completos seguidos, el hábito más constante y el más flojo, recuperaciones y récords cercanos) y recuerda sus últimos 3 mensajes para no repetirse.
 - **Alertas de salud**: si algo falla en silencio, el bot te avisa una vez al día, desde las 06:00 para no despertarte, con «🩺 Revisión del bot»: un aviso o el cierre de rachas que falló en todos sus reintentos, Notion que no creó las filas de hoy (recurrencias apagadas) o el coach de IA que falló (por ejemplo, por falta de saldo).
 
 ## Cómo funciona
 
-Notion es la **única base de datos** del sistema. El Cloudflare Worker no almacena datos de tus hábitos; solo guarda estado efímero en KV (deduplicación de avisos, memoria corta del chat y caché de la Matriz Atómica).
+Notion es la **única base de datos** del sistema. El Cloudflare Worker no almacena datos de tus hábitos; solo guarda estado efímero en KV (deduplicación de avisos, memoria corta del chat y del coach, y caché de la Matriz Atómica).
 
 ```text
 +-------------------+        +-------------------------------+        +-------------------+
@@ -55,7 +55,7 @@ Para que el chat no se llene, **cada hábito tiene una sola tarjeta viva**: al l
 | `cierre` | 23:00 | Cierre con coach (los domingos incluye la revisión semanal). |
 | `procesar` | 03:00 | Procesa las rachas del día anterior (lo marcado de madrugada aún cuenta). |
 
-**De madrugada (00:00 a 03:00) el día anterior sigue abierto:** `/hoy` y `/pendientes` muestran también los «🌒 Pendientes de ayer», y en el chat puedes contarle al coach algo que hiciste ayer. A las 03:00 el día se cierra: los botones de un día cerrado ya no cambian nada (el bot te avisa y los quita). Las notas del cierre (🧊 congelador usado, 💔 racha perdida, 🏅 récord, 🎁 congelador ganado) llegan con el aviso de las 06:30, aunque no tengas pendientes de la mañana.
+**De madrugada (00:00 a 03:00) el día anterior sigue abierto:** `/hoy` y `/pendientes` muestran también los «🌒 Pendientes de ayer», y en el chat puedes contarle al coach algo que hiciste ayer. El coach ya cuenta en tu racha lo que cumpliste ayer, aunque se guarde en Notion recién a las 03:00. A las 03:00 el día se cierra: los botones de un día cerrado ya no cambian nada (el bot te avisa y los quita). Las notas del cierre (🧊 congelador usado, 💔 racha perdida, 🏅 récord, 🎁 congelador ganado) llegan con el aviso de las 06:30, aunque no tengas pendientes de la mañana.
 
 ## Reglas de racha
 
