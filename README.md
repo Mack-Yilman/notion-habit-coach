@@ -290,6 +290,7 @@ Slots disponibles:
 | Síntoma | Causa probable | Solución |
 | --- | --- | --- |
 | El bot no responde. | Webhook no registrado o `TELEGRAM_CHAT_ID` incorrecto. | Ejecuta `node scripts/setup.mjs webhook --url <URL>` y verifica que tu chat ID esté en `.dev.vars` y subido a Cloudflare. |
+| Los avisos llegan, pero los botones y comandos no responden. | Cambiaste el subdominio `workers.dev` de tu cuenta (o la URL del Worker) y Telegram sigue enviando al webhook anterior. | Vuelve a ejecutar `node scripts/setup.mjs webhook --url <nueva URL>`. Si Telegram responde «Failed to resolve host», espera: guarda en caché que el dominio nuevo no existía. Reintenta cada 2 minutos (puede tardar unos 10). |
 | Error «object_not_found» de Notion. | La página no está compartida con la integración. | Entra en tu página «Habit Tracker Pro» en Notion, ve a ••• → **Conexiones** y añade la integración. |
 | No llegan los avisos programados. | No hay hábitos pendientes en ese bloque o el ID de KV `STATE` está mal configurado. | Verifica si hay tareas pendientes en ese bloque y revisa que el `id` en `kv_namespaces` de `wrangler.jsonc` sea el correcto. |
 | La racha no se actualiza. | Faltan las columnas de racha en «Hábitos». | Ejecuta `node scripts/setup.mjs notion --aplicar` para agregarlas automáticamente. |
