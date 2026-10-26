@@ -2,9 +2,10 @@
 // no las calcula. Lógica pura, sin red.
 
 import { RANGO_BY_KEY } from './config';
-import { sortEntries, type Entry } from './habits';
+import { sortEntries, type Entry, type Stats } from './habits';
 import { outcomeFromEstado } from './streak';
-import { addDays, dateRange, formatCorto } from './time';
+import type { Matrix } from './matrix';
+import { addDays, dateRange, DIAS_LARGOS, formatCorto, weekdayOf } from './time';
 import { esc } from './telegram';
 
 export interface Tasa {
@@ -123,4 +124,58 @@ export function renderMapaMes(entries: Entry[], desde: string, hasta: string): s
   });
   const leyenda = semanas.map(([a, b]) => `${formatCorto(a).slice(4)}–${formatCorto(b).slice(4)}`).join(' · ');
   return `<b>🗓️ Mes por semanas</b>\n${lineas.join('\n')}\n<i>🟩 ≥85 % · 🟨 ≥60 % · 🟧 ≥40 % · 🟥 menos · ⬜ sin filas\nSemanas: ${leyenda}</i>`;
+}
+
+const MIN_DIA = 3; // filas mínimas por día de la semana para decir «cae los lunes»
+
+/**
+ * Ficha por hábito del periodo para el prompt del coach (reemplaza la tabla «de hoy»): tasa,
+ * cambio contra el periodo anterior, omitidos, mejor y peor día de la semana, racha al cierre
+ * y Señal. Los 3 más flojos y el más constante llevan además su versión mínima.
+ */
+export function fichaPeriodo(
+  entries: Entry[],
+  actual: ResumenPeriodo,
+  previo: ResumenPeriodo | null,
+  stats: Record<string, Stats>,
+  matrices: Record<string, Matrix>,
+): string {
+  const porNombre = new Map<string, Entry[]>();
+  for (const e of entries) {
+    if (e.fecha && e.fecha >= actual.desde && e.fecha <= actual.hasta) porNombre.set(e.nombre, [...(porNombre.get(e.nombre) ?? []), e]);
+  }
+  const orden = ordenar(actual);
+  const destacados = new Set([...orden.slice(-3).map((h) => h.nombre), ...(orden[0] ? [orden[0].nombre] : [])]);
+  const lineas = [...porNombre.entries()].map(([nombre, fs]) => {
+    const t = actual.porHabito[nombre] ?? { ok: 0, tot: fs.length };
+    const campos = [nombre, fs[0]!.rango ? RANGO_BY_KEY[fs[0]!.rango].label : 'sin rango', `${pct(t)} % (${t.ok}/${t.tot})`];
+    const antes = previo?.porHabito[nombre];
+    if (antes && antes.tot >= MIN_FILAS && t.tot >= MIN_FILAS) campos.push(`vs. periodo anterior ${flecha(pct(t) - pct(antes))} pts`);
+    const omitidos = fs.filter((e) => e.estado === 'omitido').length;
+    if (omitidos) campos.push(`${omitidos} omitidos`);
+    // Tendencia semana a semana: el modelo dice si mejora, empeora o se mantiene sin inventarlo.
+    const dias7 = dateRange(actual.desde, actual.hasta);
+    if (dias7.length > 7) {
+      const tasas: string[] = [];
+      for (let i = 0; i < dias7.length; i += 7) {
+        const t7 = resumir(fs, dias7[i]!, dias7[Math.min(i + 6, dias7.length - 1)]!).total;
+        if (t7.tot) tasas.push(`${pct(t7)} %`);
+      }
+      if (tasas.length > 1) campos.push(`por semana ${tasas.join(' → ')}`);
+    }
+    const dias: Record<string, Tasa> = {};
+    for (const e of fs) suma(dias, String(weekdayOf(e.fecha!)), outcomeFromEstado(e.estado ?? null) === 'done' ? 1 : 0);
+    const porDia = Object.entries(dias).filter(([, d]) => d.tot >= MIN_DIA).map(([k, d]) => ({ k: Number(k), p: pct(d) })).sort((a, b) => a.p - b.p);
+    if (porDia.length > 1 && porDia[0]!.p !== porDia[porDia.length - 1]!.p) {
+      campos.push(`mejor día ${DIAS_LARGOS[porDia[porDia.length - 1]!.k]} ${porDia[porDia.length - 1]!.p} %, peor ${DIAS_LARGOS[porDia[0]!.k]} ${porDia[0]!.p} %`);
+    }
+    const habitId = fs.find((e) => e.habitId)?.habitId;
+    const st = habitId ? stats[habitId]?.state : undefined;
+    if (st) campos.push(`racha al cierre del periodo ${st.racha} (mejor ${st.mejor}), ${st.congeladores} 🧊`);
+    const m = habitId ? matrices[habitId] : undefined;
+    campos.push(m?.senal ? `Señal: ${m.senal}` : 'sin Señal definida');
+    if (destacados.has(nombre) && m?.protocolo.parcial) campos.push(`versión mínima: ${m.protocolo.parcial}`);
+    return `- ${campos.join(' | ')}`;
+  });
+  return lineas.length ? `FICHA POR HÁBITO DEL PERIODO (${actual.desde} a ${actual.hasta}; cumplido = Parcial o mejor):\n${lineas.join('\n')}` : '';
 }

@@ -20,7 +20,7 @@ export const SYSTEM_PROMPT = `Eres «Coach», el entrenador de hábitos personal
 - Los hábitos se agrupan por rango horario (madrugada, mañana, tarde, noche, durante el día). El usuario es flexible dentro de cada rango: no tiene horas fijas.
 
 Cómo respondes:
-- En español, tuteando, con un tono cálido y alentador: estás de su lado. Empieza reconociendo algo concreto y real que sí hizo (de AYER, HOY o ÚLTIMOS 7 DÍAS), con su cifra. Sin sermones, sin culpa, sin frases hechas ni motivación genérica.
+- En español, tuteando, con un tono cálido y alentador: estás de su lado. Empieza reconociendo algo concreto y real que sí hizo (de AYER, HOY, ÚLTIMOS 7 DÍAS o, si la TAREA es un periodo, de ese periodo), con su cifra. Sin sermones, sin culpa, sin frases hechas ni motivación genérica.
 - Usa SOLO lo que está en DATOS. Las cifras ya vienen calculadas: no las recalcules ni inventes otras. Si falta un dato, no lo supongas.
 - Respeta el MOMENTO y la columna «cuándo»: nunca pidas hacer ahora un hábito que «aún no toca»; como mucho, menciónalo como lo próximo. La columna «al cerrar el día» dice qué pasaría con la racha en el cierre de las 03:00, no ahora.
 - Si no hay un riesgo real, no lo inventes: celebra y deja descansar. Si todo va bien, no exijas más.
@@ -291,13 +291,13 @@ export const TAREA_RESUMEN = `TAREA: resumen que el usuario pidió con /resumen,
 - Mañana o tarde: «Cómo vas» es la cifra de HOY; «Lo siguiente» es lo próximo que toca según «cuándo», con su versión mínima si ayuda. Sin alarmas por hábitos que aún no tocan.
 - Noche: «Cómo vas» es lo logrado hoy; «Lo siguiente» es el riesgo real de esta noche si lo hay (columna «al cerrar el día») y una acción concreta.`;
 
-export const TAREA_SEMANA = `TAREA: revisión semanal, máximo 200 palabras. Usa las CIFRAS (últimos 7 días contra los 7 anteriores) solo para sostener cada punto. Etiquetas:
+export const TAREA_SEMANA = `TAREA: revisión semanal, máximo 200 palabras. Habla solo del periodo de CIFRAS, la FICHA y el HISTORIAL: no menciones «hoy», «ayer» ni «ahora», el estado de hoy no forma parte de este análisis. Cada afirmación lleva su cifra. Etiquetas:
 <b>🏆 Logro</b> — el logro principal de estos días.
 <b>🔍 Patrón</b> — el más claro (hábito, rango horario o día de la semana con más fallos), con su cifra y, si es relevante, su cambio frente a la semana anterior.
 <b>🔧 Ajuste</b> — UN solo ajuste concreto al sistema: mover el hábito de rango, bajar el objetivo a su versión mínima o cambiar su Señal. Explica por qué en una frase.
 <b>🎯 Foco</b> — una línea para la próxima semana, distinta del ajuste (no repitas la misma idea).`;
 
-export const TAREA_MES = `TAREA: balance del mes, máximo 220 palabras. Usa las CIFRAS (este mes contra el anterior, si hay) solo para sostener cada punto. Etiquetas:
+export const TAREA_MES = `TAREA: balance del mes, máximo 220 palabras. Habla solo del periodo de CIFRAS, la FICHA y el HISTORIAL: no menciones «hoy», «ayer» ni «ahora», el estado de hoy no forma parte de este análisis. Cada afirmación lleva su cifra. Etiquetas:
 <b>📊 Balance</b> — cómo fue el mes en una o dos frases, con el cumplimiento y su cambio frente al mes anterior si existe.
 <b>💪 Lo que sostuvo</b> — los hábitos o rangos más constantes y por qué importa para la identidad.
 <b>🧩 Lo que se escapó</b> — el hábito, rango o día de la semana más flojo, con su cifra, sin culpa.
@@ -402,12 +402,25 @@ export async function coachCierre(complete: Completer, d: CoachData, timeoutMs?:
 
 const SIN_IA = '<i>(Sin IA: el coach no estuvo disponible. Arriba van las cifras.)</i>';
 
+/**
+ * Contexto de una revisión semanal o mensual: sin «hoy», ayer ni la hora (el modelo hablaba del
+ * estado de hoy en un balance del mes). Trae solo el periodo, la ficha por hábito y la memoria corta.
+ */
+export function buildContextPeriodo(d: CoachData, periodo: string, ficha: string): string {
+  const lines = [`PERIODO: ${periodo}`];
+  if (ficha) lines.push('', ficha);
+  if (d.ultimos?.length) {
+    lines.push('', 'TUS ÚLTIMOS MENSAJES (no repitas aperturas, frases ni ideas):', ...d.ultimos.map((t) => `- «${t.slice(0, 250)}»`));
+  }
+  return lines.join('\n');
+}
+
 /** Revisión semanal o mensual: 1 llamada con razonamiento (~8 s medidos). `historial` ya trae las CIFRAS. */
-async function coachPeriodo(complete: Completer, d: CoachData, historial: string, tarea: string, timeoutMs: number): Promise<string> {
+async function coachPeriodo(complete: Completer, contexto: string, historial: string, tarea: string, timeoutMs: number): Promise<string> {
   try {
     const r = await complete({
       messages: [
-        { role: 'system', content: `${SYSTEM_PROMPT}\n\nDATOS:\n${buildContext(d, 'todos')}\n\n${historial}` },
+        { role: 'system', content: `${SYSTEM_PROMPT}\n\nDATOS:\n${contexto}\n\n${historial}` },
         { role: 'user', content: tarea },
       ],
       thinking: true,
@@ -421,11 +434,11 @@ async function coachPeriodo(complete: Completer, d: CoachData, historial: string
   }
 }
 
-export const coachSemana = (complete: Completer, d: CoachData, historial: string, timeoutMs = 90_000) =>
-  coachPeriodo(complete, d, historial, TAREA_SEMANA, timeoutMs);
+export const coachSemana = (complete: Completer, contexto: string, historial: string, timeoutMs = 90_000) =>
+  coachPeriodo(complete, contexto, historial, TAREA_SEMANA, timeoutMs);
 
-export const coachMes = (complete: Completer, d: CoachData, historial: string, timeoutMs = 90_000) =>
-  coachPeriodo(complete, d, historial, TAREA_MES, timeoutMs);
+export const coachMes = (complete: Completer, contexto: string, historial: string, timeoutMs = 90_000) =>
+  coachPeriodo(complete, contexto, historial, TAREA_MES, timeoutMs);
 
 export interface ChatTurn {
   role: 'user' | 'assistant';

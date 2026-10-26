@@ -128,6 +128,9 @@ describe('/mes y /semana', () => {
     await handleUpdate(app, escribir('/mes'));
     expect(prompts[0].messages[1].content).toContain('TAREA: balance del mes');
     expect(prompts[0].messages[0].content).toContain('CIFRAS (este mes contra el anterior)');
+    expect(prompts[0].messages[0].content).toContain('FICHA POR HÁBITO DEL PERIODO');
+    expect(prompts[0].messages[0].content).not.toContain('HOY:');
+    expect(prompts[0].messages[0].content).not.toContain('HÁBITOS DE HOY');
     expect(prompts[0].thinking).toBe(true);
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toContain('Balance de octubre 2026');
@@ -150,6 +153,8 @@ describe('/mes y /semana', () => {
     await handleUpdate(app, escribir('/semana'));
     expect(prompts[0].messages[1].content).toContain('<b>🔧 Ajuste</b>');
     expect(prompts[0].messages[0].content).toContain('CIFRAS (semana actual contra la anterior)');
+    expect(prompts[0].messages[0].content).toContain('FICHA POR HÁBITO DEL PERIODO');
+    expect(prompts[0].messages[0].content).not.toContain('HOY:');
     const t = sent[0]!.text;
     expect(t.indexOf('📈 Cifras')).toBeLessThan(t.indexOf('🏆 Logro'));
     expect(t.indexOf('🏆 Logro')).toBeLessThan(t.indexOf('Últimos 14 días'));
