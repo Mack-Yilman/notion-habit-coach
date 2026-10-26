@@ -7,6 +7,7 @@ import {
   coachData,
   enviarTarjetas,
   fallosKey,
+  filasConHistoria,
   guardarUltimo,
   llmFallaKey,
   loadStats,
@@ -15,13 +16,14 @@ import {
   type App,
 } from './app';
 import { getCachedMatrices } from './matrix';
-import { buildHistorial, coachCierre, coachSemana, TIMEOUT_CRON_MS } from './coach';
+import { buildHistorial, coachCierre, coachMes, coachSemana, TIMEOUT_CRON_MS, type CoachData } from './coach';
+import { renderCifras, renderMapaMes, resumir, semanaYPrevia, snapshotMesKey, type ResumenPeriodo } from './periodo';
 import { hasStreakProps, isPending, NOMBRE_PREFIX, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
 import { headerAviso, LEYENDA, renderMapa } from './messages';
 import { dueSlots, SLOTS, VENTANA_MIN, type SlotKey } from './schedule';
 import { closableUntil, INITIAL_STATE, outcomeFromEstado, processDays, type DayOutcome, type StreakState } from './streak';
-import { addDays, formatCorto } from './time';
-import { esc } from './telegram';
+import { addDays, diffDays, esUltimoDiaDelMes, formatCorto, inicioMes, mesAnterior, nombreMes } from './time';
+import { esc, stripTags } from './telegram';
 
 const sentKey = (date: string, slot: SlotKey) => `sent:${date}:${slot}`;
 const notasKey = (date: string) => `notas:${date}`;
@@ -52,6 +54,7 @@ export async function runScheduled(app: App): Promise<void> {
       if (!(e instanceof SinFilasError)) await registrarError(app, slot, String(e));
     }
   }
+  if (await enviarMesSiToca(app)) trabajo = true;
   // En los ciclos sin aviso se revisa la salud del bot y se leen las Matrices que falten
   // (el 💡 de cada tarjeta), así no gastan subrequests de los avisos.
   if (!trabajo) {
@@ -218,22 +221,75 @@ async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {
   const desde = addDays(app.now.date, domingo ? -13 : -7);
   const hist = await fetchRange(app, schema, desde, domingo ? app.now.date : addDays(app.now.date, -1), domingo ? 3 : 2);
   const data = await coachData(app, hoy, { historia: hist.filter((e) => e.fecha !== app.now.date) });
-  let texto: string;
-  let mapa = '';
+  let cuerpo: string;
   if (domingo) {
-    texto = await coachSemana(app.llm, data, buildHistorial(hist, desde, app.now.date));
-    mapa = renderMapa(hist, desde, app.now.date);
+    cuerpo = await armarSemana(app, data, hist);
   } else {
-    texto = await coachCierre(app.llm, data, TIMEOUT_CRON_MS);
+    cuerpo = await coachCierre(app.llm, data, TIMEOUT_CRON_MS);
+    await guardarUltimo(app, cuerpo);
   }
-  await guardarUltimo(app, texto);
   const titulo = domingo ? '📊 Revisión semanal' : SLOTS.cierre.titulo;
   const pendientes = hoy.filter(isPending);
   const pie = pendientes.length ? `\n\n<b>Aún puedes registrar (hasta las 03:00):</b>` : '';
-  await app.tg.send(app.chatId, `<b>${titulo}</b> · ${formatCorto(app.now.date)}\n\n${texto}${mapa ? `\n\n${mapa}` : ''}${pie}`);
+  await app.tg.send(app.chatId, `<b>${titulo}</b> · ${formatCorto(app.now.date)}\n\n${cuerpo}${pie}`);
   // Tarjetas silenciosas para salvar lo que falta antes del cierre de las 03:00.
   const n = await enviarTarjetas(app, hoy, pendientes, `<i>${LEYENDA}</i>`);
   return `cierre con ${n} pendientes`;
+}
+
+/**
+ * Cuerpo de la revisión semanal: cifras calculadas aquí (últimos 7 días contra los 7
+ * anteriores), texto del coach y mapa de 14 días. `todas` trae hoy y los 13 días previos.
+ */
+export async function armarSemana(app: App, data: CoachData, todas: Entry[], timeoutMs?: number): Promise<string> {
+  const hasta = app.now.date;
+  const desde = addDays(hasta, -13);
+  const { actual, previo } = semanaYPrevia(todas, hasta);
+  const cifras = renderCifras(actual, previo, 'los 7 días anteriores');
+  const texto = await coachSemana(app.llm, data, `${buildHistorial(todas, desde, hasta)}\n\nCIFRAS (semana actual contra la anterior):\n${stripTags(cifras)}`, timeoutMs);
+  await guardarUltimo(app, texto);
+  return [cifras, texto, renderMapa(todas, desde, hasta)].filter(Boolean).join('\n\n');
+}
+
+/** Balance del mes en curso hasta hoy, comparado con el snapshot del mes anterior (KV, sin más lecturas de Notion). */
+export async function armarMes(app: App, timeoutMs?: number): Promise<string> {
+  const hasta = app.now.date;
+  const desde = inicioMes(hasta);
+  const schema = await getSchema(app);
+  // Un mes son ~270 filas (3 páginas de Notion); 5 páginas cubren hasta ~16 hábitos.
+  const { hoy, historia, todas } = await filasConHistoria(app, schema, diffDays(desde, hasta), 5);
+  const actual = resumir(todas, desde, hasta);
+  const titulo = `<b>📅 Balance de ${nombreMes(hasta)}</b> · ${formatCorto(hasta)}`;
+  if (!actual.total.tot) return `${titulo}\n\nAún no hay filas de este mes en Notion.`;
+  const previo = await app.kv.get<ResumenPeriodo>(snapshotMesKey(mesAnterior(hasta)), 'json');
+  const cifras = renderCifras(actual, previo, 'el mes anterior');
+  const data = await coachData(app, hoy, { historia });
+  const texto = await coachMes(app.llm, data, `${buildHistorial(todas, desde, hasta)}\n\nCIFRAS (este mes contra el anterior):\n${stripTags(cifras)}`, timeoutMs);
+  await guardarUltimo(app, texto);
+  // Solo el último día del mes: un /mes a mitad de mes no debe dejar un snapshot parcial para el mes siguiente.
+  if (esUltimoDiaDelMes(hasta)) await app.kv.put(snapshotMesKey(hasta.slice(0, 7)), JSON.stringify(actual), { expirationTtl: 120 * 86400 });
+  return [titulo, cifras, texto, renderMapaMes(todas, desde, hasta)].filter(Boolean).join('\n\n');
+}
+
+const mesKey = (date: string) => `sent:${date}:mes`;
+
+/**
+ * El último día del mes, tras el cierre de las 23:00, envía el balance mensual. Tiene su propio
+ * candado y se reintenta en los ciclos siguientes sin repetir el cierre del día si falla.
+ */
+export async function enviarMesSiToca(app: App): Promise<boolean> {
+  const fecha = app.now.date;
+  if (!esUltimoDiaDelMes(fecha) || (await app.kv.get(mesKey(fecha))) || (await app.kv.get(sentKey(fecha, 'cierre'))) !== 'hecho') return false;
+  await app.kv.put(mesKey(fecha), 'en_curso', { expirationTtl: 600 });
+  try {
+    await app.tg.send(app.chatId, await armarMes(app, TIMEOUT_CRON_MS));
+    await app.kv.put(mesKey(fecha), 'hecho', { expirationTtl: 3 * 86400 });
+    return true;
+  } catch (e) {
+    console.error(JSON.stringify({ evento: 'mes_error', error: String(e) }));
+    await app.kv.delete(mesKey(fecha));
+    return false;
+  }
 }
 
 // ---------- Rachas ----------

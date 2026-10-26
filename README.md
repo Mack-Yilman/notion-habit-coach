@@ -13,7 +13,8 @@ Bot de Telegram con coach de IA que hace accionable tu plantilla Habit Tracker P
   - 🚀 **Alto impacto**
 - **Rachas inteligentes**: Sistema de rachas con 2 congeladores por hábito para proteger tu constancia ante imprevistos.
 - **Nunca falles dos veces**: si un hábito falló ayer, su tarjeta de hoy lo marca con «⚠️ Ayer no salió: no falles dos veces» y te propone su versión mínima (el nivel 🕯️ Parcial de su Protocolo), para no encadenar dos fallos.
-- **Coach de IA**: Cierre diario nocturno, `/resumen` a cualquier hora, revisión semanal los domingos (con un mapa de 14 días en emojis) y modo de chat libre que comprende lenguaje natural y puede registrar hábitos automáticamente (por ejemplo: «ya fui al gym»). Su tono es cálido y alentador: empieza por lo que sí hiciste. Sabe qué hora es y qué hábitos aún no tocan, por lo que de madrugada hace el balance de ayer en vez de pedirte algo de la noche. También conoce tus últimos 7 días (días completos seguidos, el hábito más constante y el más flojo, recuperaciones y récords cercanos) y recuerda sus últimos 3 mensajes para no repetirse.
+- **Coach de IA**: Cierre diario nocturno, `/resumen` a cualquier hora, revisión semanal los domingos (con un mapa de 14 días en emojis), balance mensual (`/mes`, y solo el último día del mes) y modo de chat libre que comprende lenguaje natural y puede registrar hábitos automáticamente (por ejemplo: «ya fui al gym»). Su tono es cálido y alentador: empieza por lo que sí hiciste. Sabe qué hora es y qué hábitos aún no tocan, por lo que de madrugada hace el balance de ayer en vez de pedirte algo de la noche. También conoce tus últimos 7 días (días completos seguidos, el hábito más constante y el más flojo, recuperaciones y récords cercanos) y recuerda sus últimos 3 mensajes para no repetirse.
+- **Mensajes del coach con estructura**: el cierre, el resumen, la revisión semanal y el balance mensual llegan con etiquetas fijas en negrita (por ejemplo, 🏆 Logro · 🔍 Patrón · 🔧 Ajuste · 🎯 Foco), una o dos frases por etiqueta y pocos emojis. Las **cifras las calcula el Worker** (cumplimiento, mejor y peor hábito, rango más flojo y cuánto subió o bajó cada hábito frente a la semana o el mes anterior) y se muestran en un bloque «📈 Cifras» antes del texto; el modelo solo las interpreta, así que no inventa números. Si el coach de IA no responde, igual llegan las cifras.
 - **Alertas de salud**: si algo falla en silencio, el bot te avisa una vez al día, desde las 06:00 para no despertarte, con «🩺 Revisión del bot»: un aviso o el cierre de rachas que falló en todos sus reintentos, Notion que no creó las filas de hoy (recurrencias apagadas) o el coach de IA que falló (por ejemplo, por falta de saldo).
 
 ## Cómo funciona
@@ -47,13 +48,15 @@ Para que el chat no se llene, **cada hábito tiene una sola tarjeta viva**: al l
 | Bloque / Slot | Hora local | Descripción |
 | --- | --- | --- |
 | `manana` | 06:30 | Mañana: incluye madrugada/Dormir, mañana y «durante el día». |
-| `manana_ultimo` | 10:30 | Último llamado de la mañana (pendientes de madrugada y mañana). |
+| `manana_ultimo` | 10:30 | Último llamado de la mañana (madrugada, mañana y «durante el día»). |
 | `tarde` | 12:30 | Bloque de la tarde y lo que aún falta de «durante el día». |
-| `tarde_ultimo` | 16:30 | Último llamado de la tarde. |
-| `noche` | 18:30 | Bloque de la noche. |
+| `tarde_ultimo` | 16:30 | Último llamado de la tarde (tarde y «durante el día»). |
+| `noche` | 18:30 | Bloque de la noche y lo que aún falta de «durante el día». |
 | `noche_ultimo` | 21:30 | Último llamado del día (noche + durante el día). |
-| `cierre` | 23:00 | Cierre con coach (los domingos incluye la revisión semanal). |
+| `cierre` | 23:00 | Cierre con coach (los domingos incluye la revisión semanal; el último día del mes, además, el balance mensual). |
 | `procesar` | 03:00 | Procesa las rachas del día anterior (lo marcado de madrugada aún cuenta). |
+
+Los hábitos con rango **«❇️ Durante el día»** se recuerdan en los **seis avisos** (cada bloque y su último llamado) mientras sigan pendientes, y su tarjeta anterior se borra al reenviarla. Los pendientes de un bloque ya pasado (por ejemplo, uno de la mañana) no se reenvían en los avisos de la tarde o la noche: se quedan en su tarjeta, o puedes verlos con `/pendientes`.
 
 **De madrugada (00:00 a 03:00) el día anterior sigue abierto:** `/hoy` y `/pendientes` muestran también los «🌒 Pendientes de ayer», y en el chat puedes contarle al coach algo que hiciste ayer. El coach ya cuenta en tu racha lo que cumpliste ayer, aunque se guarde en Notion recién a las 03:00. A las 03:00 el día se cierra: los botones de un día cerrado ya no cambian nada (el bot te avisa y los quita). Las notas del cierre (🧊 congelador usado, 💔 racha perdida, 🏅 récord, 🎁 congelador ganado) llegan con el aviso de las 06:30, aunque no tengas pendientes de la mañana.
 
@@ -250,7 +253,8 @@ Tras editar Matrices, envía `/actualizar` al bot para que las vuelva a leer.
 | `/pendientes` | Un mensaje con botones por cada hábito pendiente de hoy. |
 | `/rachas` | Muestra el estado de tus rachas y congeladores disponibles. |
 | `/resumen` | Solicita una intervención del coach de IA en el momento. |
-| `/semana` | Revisión de los últimos 14 días con el coach, más un mapa en emojis: una fila por hábito, en dos semanas de 7 (➖ = ese día no tenía fila). |
+| `/semana` | Revisión de los últimos 14 días: cifras de los últimos 7 días contra los 7 anteriores, texto del coach y un mapa en emojis (el nombre del hábito en una línea y debajo sus 14 días en dos semanas de 7; ➖ = ese día no tenía fila). |
+| `/mes` | Balance del mes en curso: cifras contra el mes anterior, texto del coach y un mapa por semanas (🟩 ≥85 %, 🟨 ≥60 %, 🟧 ≥40 %, 🟥 menos, ⬜ sin filas). También llega solo a las 23:00 del último día del mes. El primer mes no tiene comparación: el Worker guarda un resumen de cada mes en KV (120 días) para compararlo con el siguiente. |
 | `/recalcular` | Rehace las rachas desde el historial de Notion (hasta unos 3 meses). Con muchos hábitos puede pedirte que lo envíes otra vez para terminar, por el límite del plan gratuito de Cloudflare. |
 | `/actualizar` | Vuelve a leer y actualizar las Matrices Atómicas en caché. |
 | `/ayuda` | Muestra la ayuda y lista de comandos disponibles. |

@@ -106,3 +106,63 @@ describe('/resumen de madrugada', () => {
     expect(JSON.parse(kv.m.get('coach:ultimos')!)).toEqual(['Mensaje 1', 'Mensaje 2']);
   });
 });
+
+describe('/mes y /semana', () => {
+  const filas = () => [
+    row('g12', 'h-gym', 'Gym', '2026-10-12', '⚡ Hecho'),
+    row('g13', 'h-gym', 'Gym', '2026-10-13', '⚪ Sin iniciar'),
+    row('g14', 'h-gym', 'Gym', '2026-10-14', '⚡ Hecho'),
+  ];
+  const espiar = (app: any) => {
+    const prompts: any[] = [];
+    app.llm = async (o: any) => {
+      prompts.push(o);
+      return { content: '<b>🏆 Logro</b>\nTexto', toolCalls: [], provider: 'openai-compatible' as const };
+    };
+    return prompts;
+  };
+
+  it('/mes: cifras del Worker, texto con etiquetas y mapa por semanas, sin snapshot parcial', async () => {
+    const { app, sent, kv } = fakeApp('2026-10-14T17:00:00Z', filas());
+    const prompts = espiar(app);
+    await handleUpdate(app, escribir('/mes'));
+    expect(prompts[0].messages[1].content).toContain('TAREA: balance del mes');
+    expect(prompts[0].messages[0].content).toContain('CIFRAS (este mes contra el anterior)');
+    expect(prompts[0].thinking).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain('Balance de octubre 2026');
+    expect(sent[0]!.text).toContain('Cumplimiento: <b>67 %</b> (2/3)');
+    expect(sent[0]!.text).toContain('Mes por semanas');
+    expect(kv.m.has('resumen:mes:2026-10')).toBe(false); // a mitad de mes no hay snapshot
+  });
+
+  it('/mes sin filas del mes lo dice sin llamar al modelo', async () => {
+    const { app, sent } = fakeApp('2026-10-14T17:00:00Z', []);
+    const prompts = espiar(app);
+    await handleUpdate(app, escribir('/mes'));
+    expect(prompts).toHaveLength(0);
+    expect(sent[0]!.text).toContain('Aún no hay filas de este mes');
+  });
+
+  it('/semana: cifras, texto y mapa, con las cifras también en el prompt', async () => {
+    const { app, sent } = fakeApp('2026-10-14T17:00:00Z', filas());
+    const prompts = espiar(app);
+    await handleUpdate(app, escribir('/semana'));
+    expect(prompts[0].messages[1].content).toContain('<b>🔧 Ajuste</b>');
+    expect(prompts[0].messages[0].content).toContain('CIFRAS (semana actual contra la anterior)');
+    const t = sent[0]!.text;
+    expect(t.indexOf('📈 Cifras')).toBeLessThan(t.indexOf('🏆 Logro'));
+    expect(t.indexOf('🏆 Logro')).toBeLessThan(t.indexOf('Últimos 14 días'));
+    expect(t).toContain('<b>Gym</b>\n');
+  });
+
+  it('si el coach falla, igual llegan las cifras', async () => {
+    const { app, sent } = fakeApp('2026-10-14T17:00:00Z', filas());
+    app.llm = async () => {
+      throw new Error('LLM caído');
+    };
+    await handleUpdate(app, escribir('/mes'));
+    expect(sent[0]!.text).toContain('📈 Cifras');
+    expect(sent[0]!.text).toContain('Sin IA');
+  });
+});

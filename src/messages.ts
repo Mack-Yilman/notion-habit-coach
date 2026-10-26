@@ -129,7 +129,8 @@ export function renderMapa(historial: Entry[], desde: string, hasta: string): st
     const iconos = dias.map((d) => (serie.has(d) ? ESTADO_BY_KEY[serie.get(d) ?? 'sin_iniciar'].icon : '➖'));
     const semanas: string[] = [];
     for (let i = 0; i < iconos.length; i += 7) semanas.push(iconos.slice(i, i + 7).join(''));
-    return `${semanas.join(' ')}  ${esc(e.nombre)}`;
+    // El nombre va en su propia línea: junto a los íconos, Telegram lo partía en dos renglones.
+    return `<b>${esc(e.nombre)}</b>\n${semanas.join(' ')}`;
   });
   return `<b>🗓️ Últimos ${dias.length} días</b> · ${formatCorto(desde)} → ${formatCorto(hasta)}\n${lineas.join('\n')}\n<i>➖ = sin fila ese día</i>`;
 }
@@ -146,6 +147,7 @@ export const AYUDA = [
   '/rachas — rachas y congeladores 🧊',
   '/resumen — el coach analiza tu día',
   '/semana — revisión de los últimos 14 días',
+  '/mes — balance del mes en curso (también llega solo el último día del mes)',
   '/recalcular — rehace las rachas desde el historial',
   '/actualizar — vuelve a leer tus Matrices Atómicas',
   '',

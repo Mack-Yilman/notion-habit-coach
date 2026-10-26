@@ -134,8 +134,8 @@ describe('renderMapa', () => {
     ];
     const m = renderMapa(hist, '2026-09-29', '2026-10-06');
     expect(m).toContain('<b>🗓️ Últimos 8 días</b> · mar 29/09 → mar 06/10');
-    expect(m).toContain('⚡💤⚡💤⚡💤⚡ 💤  Gym &lt;1&gt;');
-    expect(m).toContain('➖➖➖➖➖➖➖ 🕯️  Leer');
+    expect(m).toContain('<b>Gym &lt;1&gt;</b>\n⚡💤⚡💤⚡💤⚡ 💤');
+    expect(m).toContain('<b>Leer</b>\n➖➖➖➖➖➖➖ 🕯️');
     // Tarde antes que noche, como en la plantilla.
     expect(m.indexOf('Gym')).toBeLessThan(m.indexOf('Leer'));
   });

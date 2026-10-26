@@ -68,6 +68,22 @@ export function formatCorto(date: string): string {
   return `${DIAS_CORTOS[weekdayOf(date)]} ${d}/${m}`;
 }
 
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+/** «octubre 2026» */
+export function nombreMes(date: string): string {
+  const [y, m] = date.split('-');
+  return `${MESES[Number(m) - 1]} ${y}`;
+}
+
+/** Primer día del mes de `date`. */
+export const inicioMes = (date: string): string => `${date.slice(0, 7)}-01`;
+
+/** AAAA-MM del mes anterior al de `date`. */
+export const mesAnterior = (date: string): string => addDays(inicioMes(date), -1).slice(0, 7);
+
+export const esUltimoDiaDelMes = (date: string): boolean => addDays(date, 1).endsWith('-01');
+
 /** Lista de fechas desde `from` hasta `to`, ambas incluidas. */
 export function dateRange(from: string, to: string): string[] {
   const out: string[] = [];

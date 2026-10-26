@@ -156,6 +156,93 @@ describe('agrupar tarjetas', () => {
   });
 });
 
+describe('«durante el día» en los 6 avisos', () => {
+  const agua = (racha?: { r: number; c: number; cerrada: boolean }) => {
+    const r = row('agua', 'h-agua', 'Agua', '2026-10-14', '⚪ Sin iniciar', racha);
+    r.properties['Rango horario'].select.name = '❇️ Durante el día';
+    return [r];
+  };
+
+  it('reaparece en el último llamado de la mañana, el de la tarde y la noche, borrando la tarjeta anterior', async () => {
+    const rows = agua();
+    // 10:30, 16:30 y 18:30 Lima (misma KV: la tarjeta viva pasa de un aviso al siguiente)
+    const a = fakeApp('2026-10-14T15:30:00Z', rows);
+    await runScheduled(a.app);
+    expect(a.sent).toHaveLength(1);
+    expect(a.sent[0]!.text).toContain('Último llamado de la mañana');
+    for (const [hora, titulo] of [
+      ['2026-10-14T21:30:00Z', 'Último llamado de la tarde'],
+      ['2026-10-14T23:30:00Z', 'Bloque de la noche'],
+    ] as const) {
+      const s = fakeApp(hora, rows);
+      s.app.kv = a.app.kv;
+      await runScheduled(s.app);
+      expect(s.sent).toHaveLength(1);
+      expect(s.sent[0]!.text).toContain(titulo);
+      expect(s.sent[0]!.text).toContain('Agua');
+      expect(s.deleted).toEqual([1]); // la tarjeta del aviso anterior
+    }
+  });
+
+  it('cuenta para la racha en riesgo del último llamado de la tarde', async () => {
+    const { app, sent } = fakeApp('2026-10-14T21:30:00Z', agua({ r: 9, c: 0, cerrada: false }));
+    await runScheduled(app);
+    expect(sent[0]!.silent).toBeFalsy();
+    expect(sent[0]!.text).toContain('Racha en riesgo');
+  });
+});
+
+describe('balance mensual', () => {
+  // 31/10 23:05 en Lima = 01/11 04:05 UTC
+  const FIN_DE_MES = '2026-11-01T04:05:00Z';
+  const filas = () => [
+    row('g30', 'h-gym', 'Gym', '2026-10-30', '⚡ Hecho'),
+    row('g31', 'h-gym', 'Gym', '2026-10-31', '⚡ Hecho'),
+    row('a31', 'h-agua', 'Agua', '2026-10-31', '⚪ Sin iniciar'),
+  ];
+
+  it('el último día del mes llega tras el cierre, una sola vez, y deja el snapshot para el mes siguiente', async () => {
+    const { app, sent, kv } = fakeApp(FIN_DE_MES, filas());
+    await runScheduled(app);
+    await runScheduled(app);
+    const mes = sent.filter((s) => s.text.includes('Balance de octubre 2026'));
+    expect(mes).toHaveLength(1);
+    expect(sent.findIndex((s) => s.text.includes('Cierre del día'))).toBeLessThan(sent.indexOf(mes[0]!));
+    expect(mes[0]!.text).toContain('📈 Cifras');
+    expect(kv.m.get('sent:2026-10-31:mes')).toBe('hecho');
+    expect(JSON.parse(kv.m.get('resumen:mes:2026-10')!).total).toEqual({ ok: 2, tot: 3 });
+  });
+
+  it('compara con el snapshot del mes anterior', async () => {
+    const { app, sent, kv } = fakeApp(FIN_DE_MES, filas());
+    kv.m.set('resumen:mes:2026-09', JSON.stringify({ desde: '2026-09-01', hasta: '2026-09-30', total: { ok: 9, tot: 10 }, porHabito: {}, porRango: {} }));
+    await runScheduled(app);
+    expect(sent.find((s) => s.text.includes('Balance de octubre'))!.text).toContain('vs. el mes anterior (90 %)');
+  });
+
+  it('un día cualquiera no envía el balance', async () => {
+    const { app, sent } = fakeApp('2026-10-15T04:05:00Z', [row('g14', 'h-gym', 'Gym', '2026-10-14', '🔥 Completo')]);
+    await runScheduled(app);
+    expect(sent.some((s) => s.text.includes('Balance de'))).toBe(false);
+  });
+
+  it('si falla, no repite el cierre y se reintenta en el ciclo siguiente', async () => {
+    const { app, sent, kv } = fakeApp(FIN_DE_MES, filas());
+    const send = app.tg.send.bind(app.tg);
+    let fallar = true;
+    app.tg.send = (async (...a: Parameters<typeof send>) => {
+      if (fallar && String(a[1]).includes('Balance de')) throw new Error('Telegram 500');
+      return send(...a);
+    }) as typeof app.tg.send;
+    await runScheduled(app);
+    expect(kv.m.has('sent:2026-10-31:mes')).toBe(false);
+    fallar = false;
+    await runScheduled(app);
+    expect(sent.filter((s) => s.text.includes('Cierre del día'))).toHaveLength(1);
+    expect(sent.filter((s) => s.text.includes('Balance de octubre'))).toHaveLength(1);
+  });
+});
+
 describe('recordatorio inteligente (últimos llamados)', () => {
   // 2026-10-14 10:30 en Lima = 15:30 UTC → toca manana_ultimo
   const ULTIMO = '2026-10-14T15:30:00Z';

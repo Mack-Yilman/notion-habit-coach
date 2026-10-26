@@ -28,7 +28,9 @@ Cómo respondes:
 - Ante un fallo, sin culpa: «nunca falles dos veces» y la versión mínima antes que exigir el 100 %.
 - Si un hábito que falla aparece en SIN SEÑAL DEFINIDA, una buena sugerencia es definir su Señal (cuándo y dónde, anclada a algo que ya hace) en la Matriz Atómica de Notion.
 - Varía: no repitas aperturas, frases ni ideas de TUS ÚLTIMOS MENSAJES. La frase de identidad es opcional; úsala solo si aporta algo nuevo.
-- Formato: HTML de Telegram, solo <b> e <i>. Nada de Markdown, encabezados, tablas ni listas. Emojis con moderación.
+- Formato: HTML de Telegram, solo <b> e <i>. Nada de Markdown, encabezados, tablas ni listas. Emojis pocos y con sentido, para que se vea amigable: el de cada etiqueta de la TAREA y, como mucho, uno más suelto.
+- Si la TAREA pide etiquetas, úsalas tal cual (en <b>, cada una en su propia línea) con 1 o 2 frases debajo y una línea en blanco entre bloques. No mezcles ideas de una etiqueta en otra ni des más de un consejo.
+- Si DATOS trae «CIFRAS», ya se muestran aparte al usuario: úsalas para interpretar, sin repetirlas todas.
 - Respeta el límite de palabras de la TAREA.`;
 
 export interface CoachData {
@@ -279,21 +281,28 @@ export function buildHistorial(historial: Entry[], desde: string, hasta: string)
 
 // ---------- Tareas ----------
 
-export const TAREA_CIERRE = `TAREA: mensaje de cierre del día, máximo 110 palabras.
-1) Reconoce lo mejor del día con la cifra de HOY y, si suma, algo de ÚLTIMOS 7 DÍAS (días completos seguidos, un récord, una recuperación).
-2) Si queda un pendiente que aún se puede registrar antes de las 03:00 y su columna «al cerrar el día» dice que gasta 🧊 o pierde la racha, nómbralo, di qué se perdería y propone su versión mínima. Si no hay riesgo, no lo inventes.
-3) Cierra con una línea breve y cálida para descansar o para empezar mañana.`;
+export const TAREA_CIERRE = `TAREA: mensaje de cierre del día, máximo 110 palabras, con estas etiquetas:
+<b>🌟 Lo mejor de hoy</b> — lo mejor del día con la cifra de HOY y, si suma, algo de ÚLTIMOS 7 DÍAS (días completos seguidos, un récord, una recuperación).
+<b>⚠️ Ojo con</b> — solo si queda un pendiente que aún se puede registrar antes de las 03:00 y su columna «al cerrar el día» dice que gasta 🧊 o pierde la racha: nómbralo, di qué se perdería y propone su versión mínima. Si no hay riesgo, omite esta etiqueta completa; no lo inventes.
+<b>🎯 Mañana</b> — una línea cálida con una sola acción para descansar o empezar mañana.`;
 
-export const TAREA_RESUMEN = `TAREA: resumen que el usuario pidió con /resumen, máximo 100 palabras. Adáptalo al MOMENTO:
-- Madrugada: el día de hoy aún no empieza. Haz el balance de AYER y celebra lo logrado. Si PENDIENTES DE AYER lista hábitos, nómbralos: aún se pueden registrar antes de las 03:00, con su versión mínima; si dice «ninguno», no hables de pendientes. No menciones los hábitos de hoy salvo los que estén «en su rango ahora». Invita a descansar.
-- Mañana o tarde: cómo va el día (cifra de HOY) y lo próximo que toca según «cuándo», con su versión mínima si ayuda. Sin alarmas por hábitos que aún no tocan.
-- Noche: lo logrado hoy, el riesgo real de esta noche si lo hay (columna «al cerrar el día») y una acción concreta.`;
+export const TAREA_RESUMEN = `TAREA: resumen que el usuario pidió con /resumen, máximo 100 palabras, con las etiquetas <b>🧭 Cómo vas</b> y <b>🎯 Lo siguiente</b>. Adáptalo al MOMENTO:
+- Madrugada: el día de hoy aún no empieza. «Cómo vas» es el balance de AYER, celebrando lo logrado. Si PENDIENTES DE AYER lista hábitos, nómbralos en «Lo siguiente»: aún se pueden registrar antes de las 03:00, con su versión mínima; si dice «ninguno», no hables de pendientes. No menciones los hábitos de hoy salvo los que estén «en su rango ahora». Invita a descansar.
+- Mañana o tarde: «Cómo vas» es la cifra de HOY; «Lo siguiente» es lo próximo que toca según «cuándo», con su versión mínima si ayuda. Sin alarmas por hábitos que aún no tocan.
+- Noche: «Cómo vas» es lo logrado hoy; «Lo siguiente» es el riesgo real de esta noche si lo hay (columna «al cerrar el día») y una acción concreta.`;
 
-export const TAREA_SEMANA = `TAREA: revisión semanal, máximo 200 palabras.
-1) El logro principal de estos días.
-2) El patrón más claro (hábito, rango horario o día de la semana con más fallos), con su cifra.
-3) UN solo ajuste concreto al sistema: mover el hábito de rango, bajar el objetivo a su versión mínima o cambiar su Señal. Explica por qué en una frase.
-4) El foco de la próxima semana en una línea.`;
+export const TAREA_SEMANA = `TAREA: revisión semanal, máximo 200 palabras. Usa las CIFRAS (últimos 7 días contra los 7 anteriores) solo para sostener cada punto. Etiquetas:
+<b>🏆 Logro</b> — el logro principal de estos días.
+<b>🔍 Patrón</b> — el más claro (hábito, rango horario o día de la semana con más fallos), con su cifra y, si es relevante, su cambio frente a la semana anterior.
+<b>🔧 Ajuste</b> — UN solo ajuste concreto al sistema: mover el hábito de rango, bajar el objetivo a su versión mínima o cambiar su Señal. Explica por qué en una frase.
+<b>🎯 Foco</b> — una línea para la próxima semana, distinta del ajuste (no repitas la misma idea).`;
+
+export const TAREA_MES = `TAREA: balance del mes, máximo 220 palabras. Usa las CIFRAS (este mes contra el anterior, si hay) solo para sostener cada punto. Etiquetas:
+<b>📊 Balance</b> — cómo fue el mes en una o dos frases, con el cumplimiento y su cambio frente al mes anterior si existe.
+<b>💪 Lo que sostuvo</b> — los hábitos o rangos más constantes y por qué importa para la identidad.
+<b>🧩 Lo que se escapó</b> — el hábito, rango o día de la semana más flojo, con su cifra, sin culpa.
+<b>🔧 Ajuste</b> — UN solo ajuste concreto al sistema (mover de rango, bajar el objetivo a la versión mínima o cambiar su Señal).
+<b>🎯 Foco del mes siguiente</b> — una línea, distinta del ajuste.`;
 
 export const TAREA_CHAT = `TAREA: conversación libre con el usuario. Responde en máximo 90 palabras salvo que pida más detalle.
 Si el usuario afirma con claridad que hizo, hizo en parte, superó u omitió un hábito de HOY, usa la herramienta marcar_estado y confírmalo en tu respuesta. Si no está claro cuál hábito o qué nivel, pregunta antes de marcar. Solo marca hábitos de HOY o, si aparece la lista, de PENDIENTES DE AYER (con dia="ayer"); si no está claro de qué día habla, pregunta. Nunca marques otros días.`;
@@ -391,24 +400,32 @@ export async function coachCierre(complete: Completer, d: CoachData, timeoutMs?:
   }
 }
 
-export async function coachSemana(complete: Completer, d: CoachData, historial: string, timeoutMs = 90_000): Promise<string> {
+const SIN_IA = '<i>(Sin IA: el coach no estuvo disponible. Arriba van las cifras.)</i>';
+
+/** Revisión semanal o mensual: 1 llamada con razonamiento (~8 s medidos). `historial` ya trae las CIFRAS. */
+async function coachPeriodo(complete: Completer, d: CoachData, historial: string, tarea: string, timeoutMs: number): Promise<string> {
   try {
     const r = await complete({
       messages: [
         { role: 'system', content: `${SYSTEM_PROMPT}\n\nDATOS:\n${buildContext(d, 'todos')}\n\n${historial}` },
-        { role: 'user', content: TAREA_SEMANA },
+        { role: 'user', content: tarea },
       ],
-      // La revisión semanal sí usa razonamiento: es 1 llamada por semana (~8 s medidos).
       thinking: true,
       maxTokens: 2500,
       timeoutMs,
     });
-    return sanitizeLlmHtml(r.content) || `${fallbackCierre(d)}\n\n${esc(historial)}`;
+    return sanitizeLlmHtml(r.content) || SIN_IA;
   } catch (e) {
-    console.error('coach semana', e);
-    return `<b>Revisión semanal (sin IA)</b>\n\n<code>${esc(historial).slice(0, 3000)}</code>`;
+    console.error('coach periodo', e);
+    return SIN_IA;
   }
 }
+
+export const coachSemana = (complete: Completer, d: CoachData, historial: string, timeoutMs = 90_000) =>
+  coachPeriodo(complete, d, historial, TAREA_SEMANA, timeoutMs);
+
+export const coachMes = (complete: Completer, d: CoachData, historial: string, timeoutMs = 90_000) =>
+  coachPeriodo(complete, d, historial, TAREA_MES, timeoutMs);
 
 export interface ChatTurn {
   role: 'user' | 'assistant';

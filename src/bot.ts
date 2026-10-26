@@ -18,13 +18,13 @@ import {
   type App,
 } from './app';
 import { decodeCallback } from './callback';
-import { buildHistorial, coachChat, coachCierre, coachSemana, TAREA_RESUMEN, TIMEOUT_COMANDO_MS, type ChatTurn } from './coach';
+import { coachChat, coachCierre, TAREA_RESUMEN, TIMEOUT_COMANDO_MS, type ChatTurn } from './coach';
 import { ESTADO_BY_KEY } from './config';
 import { estadoProperty, isPending, parseEntry, type Entry } from './habits';
 import { clearMatrices } from './matrix';
-import { AYUDA, LEYENDA, renderCard, renderMapa, renderRachas, renderResumenHoy } from './messages';
-import { olvidarMatricesOk, recalcular } from './scheduler';
-import { addDays, formatCorto } from './time';
+import { AYUDA, LEYENDA, renderCard, renderRachas, renderResumenHoy } from './messages';
+import { armarMes, armarSemana, olvidarMatricesOk, recalcular } from './scheduler';
+import { formatCorto } from './time';
 import { esc } from './telegram';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -63,6 +63,8 @@ export async function handleUpdate(app: App, update: Update): Promise<void> {
         return enviarResumen(app, false);
       case 'semana':
         return enviarResumen(app, true);
+      case 'mes':
+        return enviarMes(app);
       case 'recalcular': {
         const r = await recalcular(app);
         if (r.incompleto) {
@@ -182,16 +184,17 @@ async function enviarResumen(app: App, semanal: boolean): Promise<void> {
   const data = await coachData(app, hoy, { ayer, historia });
   let texto: string;
   if (semanal) {
-    const desde = addDays(app.now.date, -dias);
-    texto = await coachSemana(app.llm, data, buildHistorial(todas, desde, app.now.date), TIMEOUT_COMANDO_MS);
-    await guardarUltimo(app, texto);
-    const mapa = renderMapa(todas, desde, app.now.date);
-    if (mapa) texto += `\n\n${mapa}`;
+    texto = await armarSemana(app, data, todas, TIMEOUT_COMANDO_MS);
   } else {
     texto = await coachCierre(app.llm, data, TIMEOUT_COMANDO_MS, TAREA_RESUMEN);
     await guardarUltimo(app, texto);
   }
   await app.tg.send(app.chatId, `<b>${semanal ? '📊 Revisión' : '🧭 Resumen'}</b> · ${formatCorto(app.now.date)}\n\n${texto}`);
+}
+
+async function enviarMes(app: App): Promise<void> {
+  await app.tg.typing(app.chatId);
+  await app.tg.send(app.chatId, await armarMes(app, TIMEOUT_COMANDO_MS));
 }
 
 async function actualizar(app: App): Promise<void> {
