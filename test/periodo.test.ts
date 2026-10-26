@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderCifras, renderMapaMes, resumir, semanaYPrevia } from '../src/periodo';
+import { fichaPeriodo, renderCifras, renderMapaMes, resumir, semanaYPrevia } from '../src/periodo';
 import { esUltimoDiaDelMes, inicioMes, mesAnterior, nombreMes } from '../src/time';
 import type { Entry } from '../src/habits';
 
@@ -83,5 +83,36 @@ describe('renderMapaMes', () => {
     expect(m).toContain('<b>Gym</b> · 74 %\n🟩🟥🟩'); // 14/19
     expect(m).toContain('Semanas:');
     expect(renderMapaMes([], '2026-10-01', '2026-10-19')).toBe('');
+  });
+});
+
+describe('fichaPeriodo', () => {
+  const stats = { 'h-Gym': { habitId: 'h-Gym', nombre: 'Gym', state: { racha: 4, mejor: 9, congeladores: 1, procesadoHasta: '2026-10-31' } } } as any;
+  const matrices = { 'h-Gym': { senal: 'Ropa lista', protocolo: { parcial: '10 sentadillas' } }, 'h-Dormir': { protocolo: {} } } as any;
+
+  it('trae tasa, cambio, omitidos, racha, Señal y versión mínima de los más flojos', () => {
+    const hist = [...serie('Gym', '2026-10-01', 2, 7), ...serie('Dormir', '2026-10-01', 7, 7), e('Gym', '2026-10-08', 'omitido')];
+    const actual = resumir(hist, '2026-10-01', '2026-10-31');
+    const previo = { ...actual, porHabito: { Gym: { ok: 6, tot: 7 }, Dormir: { ok: 7, tot: 7 } } };
+    const f = fichaPeriodo(hist, actual, previo, stats, matrices);
+    expect(f).toContain('FICHA POR HÁBITO DEL PERIODO (2026-10-01 a 2026-10-31');
+    expect(f).toMatch(/- Gym \| Mañana[^|]*\| 25 % \(2\/8\) \| vs\. periodo anterior 🔽 -61 pts \| 1 omitidos \| por semana 29 % → 0 % \| racha al cierre del periodo 4 \(mejor 9\), 1 🧊 \| Señal: Ropa lista \| versión mínima: 10 sentadillas/);
+    expect(f).toMatch(/- Dormir \|[^\n]*sin Señal definida/);
+  });
+
+  it('el mejor y el peor día de la semana solo con 3 o más filas por día', () => {
+    const dias = ['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26']; // lunes
+    const jue = ['2026-10-01', '2026-10-08', '2026-10-15', '2026-10-22']; // jueves
+    const hist = [...dias.map((d) => e('Gym', d, 'sin_iniciar')), ...jue.map((d) => e('Gym', d, 'hecho'))];
+    const f = fichaPeriodo(hist, resumir(hist, '2026-10-01', '2026-10-31'), null, {}, {});
+    expect(f).toContain('mejor día jueves 100 %, peor lunes 0 %');
+    const pocos = fichaPeriodo(hist.slice(0, 2), resumir(hist.slice(0, 2), '2026-10-01', '2026-10-31'), null, {}, {});
+    expect(pocos).not.toContain('mejor día');
+  });
+
+  it('sin filas no devuelve nada y no menciona hoy ni ayer', () => {
+    expect(fichaPeriodo([], resumir([], '2026-10-01', '2026-10-31'), null, {}, {})).toBe('');
+    const f = fichaPeriodo(serie('Gym', '2026-10-01', 3, 5), resumir(serie('Gym', '2026-10-01', 3, 5), '2026-10-01', '2026-10-31'), null, {}, {});
+    expect(f).not.toMatch(/hoy|ayer/i);
   });
 });

@@ -16,8 +16,8 @@ import {
   type App,
 } from './app';
 import { getCachedMatrices } from './matrix';
-import { buildHistorial, coachCierre, coachMes, coachSemana, TIMEOUT_CRON_MS, type CoachData } from './coach';
-import { renderCifras, renderMapaMes, resumir, semanaYPrevia, snapshotMesKey, type ResumenPeriodo } from './periodo';
+import { buildContextPeriodo, buildHistorial, coachCierre, coachMes, coachSemana, TIMEOUT_CRON_MS, type CoachData } from './coach';
+import { fichaPeriodo, renderCifras, renderMapaMes, resumir, semanaYPrevia, snapshotMesKey, type ResumenPeriodo } from './periodo';
 import { hasStreakProps, isPending, NOMBRE_PREFIX, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
 import { headerAviso, LEYENDA, renderMapa } from './messages';
 import { dueSlots, SLOTS, VENTANA_MIN, type SlotKey } from './schedule';
@@ -246,7 +246,8 @@ export async function armarSemana(app: App, data: CoachData, todas: Entry[], tim
   const desde = addDays(hasta, -13);
   const { actual, previo } = semanaYPrevia(todas, hasta);
   const cifras = renderCifras(actual, previo, 'los 7 días anteriores');
-  const texto = await coachSemana(app.llm, data, `${buildHistorial(todas, desde, hasta)}\n\nCIFRAS (semana actual contra la anterior):\n${stripTags(cifras)}`, timeoutMs);
+  const contexto = buildContextPeriodo(data, `${actual.desde} a ${actual.hasta} (semana) contra ${previo.desde} a ${previo.hasta}`, fichaPeriodo(todas, actual, previo, data.stats, data.matrices));
+  const texto = await coachSemana(app.llm, contexto, `${buildHistorial(todas, desde, hasta)}\n\nCIFRAS (semana actual contra la anterior):\n${stripTags(cifras)}`, timeoutMs);
   await guardarUltimo(app, texto);
   return [cifras, texto, renderMapa(todas, desde, hasta)].filter(Boolean).join('\n\n');
 }
@@ -264,7 +265,8 @@ export async function armarMes(app: App, timeoutMs?: number): Promise<string> {
   const previo = await app.kv.get<ResumenPeriodo>(snapshotMesKey(mesAnterior(hasta)), 'json');
   const cifras = renderCifras(actual, previo, 'el mes anterior');
   const data = await coachData(app, hoy, { historia });
-  const texto = await coachMes(app.llm, data, `${buildHistorial(todas, desde, hasta)}\n\nCIFRAS (este mes contra el anterior):\n${stripTags(cifras)}`, timeoutMs);
+  const contexto = buildContextPeriodo(data, `${desde} a ${hasta} (${nombreMes(hasta)})${previo ? ` contra ${previo.desde} a ${previo.hasta}` : ''}`, fichaPeriodo(todas, actual, previo, data.stats, data.matrices));
+  const texto = await coachMes(app.llm, contexto, `${buildHistorial(todas, desde, hasta)}\n\nCIFRAS (este mes contra el anterior):\n${stripTags(cifras)}`, timeoutMs);
   await guardarUltimo(app, texto);
   // Solo el último día del mes: un /mes a mitad de mes no debe dejar un snapshot parcial para el mes siguiente.
   if (esUltimoDiaDelMes(hasta)) await app.kv.put(snapshotMesKey(hasta.slice(0, 7)), JSON.stringify(actual), { expirationTtl: 120 * 86400 });

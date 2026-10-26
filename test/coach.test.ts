@@ -1,17 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildContext,
+  buildContextPeriodo,
   buildHistorial,
   buildTendencia,
   coachChat,
   coachCierre,
+  coachMes,
+  coachSemana,
   cuandoToca,
   fallbackCierre,
   matchEntry,
   momentoDe,
   proyeccion,
   SYSTEM_PROMPT,
+  TAREA_MES,
   TAREA_RESUMEN,
+  TAREA_SEMANA,
   type CoachData,
   type Completer,
 } from '../src/coach';
@@ -298,5 +303,36 @@ describe('contexto según la hora, ayer y la semana', () => {
     const sinIa = fallbackCierre(madrugada());
     expect(sinIa).not.toContain('Cepillarme');
     expect(sinIa).toContain('Tomar agua');
+  });
+});
+
+describe('contexto de periodo (semana y mes)', () => {
+  const d = data({ ultimos: ['Mensaje anterior'], semana: [entry({ fecha: '2026-10-11' })] });
+  const ctx = buildContextPeriodo(d, '2026-10-01 a 2026-10-31 (octubre 2026)', 'FICHA POR HÁBITO DEL PERIODO\n- Gym | 50 %');
+
+  it('no trae nada del día: ni hoy, ni ayer, ni la hora, ni la tabla con estado y «cuándo»', () => {
+    for (const x of ['HOY', 'AYER', 'MOMENTO', 'HÁBITOS DE HOY', 'cuándo', 'al cerrar el día', '23:00', 'ÚLTIMOS 7 DÍAS']) expect(ctx).not.toContain(x);
+  });
+  it('trae el periodo, la ficha y la memoria corta', () => {
+    expect(ctx).toContain('PERIODO: 2026-10-01 a 2026-10-31 (octubre 2026)');
+    expect(ctx).toContain('- Gym | 50 %');
+    expect(ctx).toContain('«Mensaje anterior»');
+  });
+  it('las tareas de semana y mes piden hablar solo del periodo; el cierre sigue con el contexto del día', () => {
+    for (const t of [TAREA_SEMANA, TAREA_MES]) expect(t).toContain('no menciones «hoy», «ayer» ni «ahora»');
+    expect(buildContext(d)).toContain('HOY:');
+  });
+  it('coachMes y coachSemana mandan ese contexto y la tarea correcta, con razonamiento', async () => {
+    const llamadas: any[] = [];
+    const complete: Completer = async (o) => {
+      llamadas.push(o);
+      return { content: '<b>🏆 Logro</b>\nok', toolCalls: [], provider: 'openai-compatible' };
+    };
+    await coachMes(complete, ctx, 'CIFRAS x');
+    await coachSemana(complete, ctx, 'CIFRAS y');
+    expect(llamadas[0].messages[0].content).toContain('PERIODO: 2026-10-01');
+    expect(llamadas[0].messages[1].content).toContain('balance del mes');
+    expect(llamadas[1].messages[1].content).toContain('revisión semanal');
+    expect(llamadas.every((l) => l.thinking === true && !l.messages[0].content.includes('HOY:'))).toBe(true);
   });
 });
