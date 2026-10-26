@@ -25,6 +25,7 @@ const COMANDOS = [
   ['rachas', 'Rachas y congeladores'],
   ['resumen', 'El coach analiza tu día'],
   ['semana', 'Revisión de los últimos 14 días'],
+  ['mes', 'Balance del mes en curso'],
   ['recalcular', 'Rehace las rachas desde el historial'],
   ['actualizar', 'Vuelve a leer tus Matrices Atómicas'],
   ['ayuda', 'Cómo funciona el bot'],

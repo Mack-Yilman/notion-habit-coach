@@ -36,13 +36,13 @@ export const SLOTS: Record<SlotKey, SlotDef> = {
     ultimo: true,
     titulo: '⏳ Último llamado de la mañana',
     intro: 'Queda poco del bloque de la mañana. Aún pendiente:',
-    rangos: ['madrugada', 'manana'],
+    rangos: ['madrugada', 'manana', 'dia'],
   },
   tarde: {
     tipo: 'aviso',
     titulo: '🌆 Bloque de la tarde',
     intro: 'Lo que toca esta tarde (y lo que aún falta de «durante el día»):',
-    // «Durante el día» se recuerda 3 veces: 06:30, 12:30 y 21:30.
+    // «Durante el día» se recuerda en los 6 avisos (cada bloque y su último llamado).
     rangos: ['tarde', 'dia'],
   },
   tarde_ultimo: {
@@ -50,13 +50,13 @@ export const SLOTS: Record<SlotKey, SlotDef> = {
     ultimo: true,
     titulo: '⏳ Último llamado de la tarde',
     intro: 'Se acaba la tarde. Aún pendiente:',
-    rangos: ['tarde'],
+    rangos: ['tarde', 'dia'],
   },
   noche: {
     tipo: 'aviso',
     titulo: '🌙 Bloque de la noche',
-    intro: 'Lo que toca esta noche:',
-    rangos: ['noche'],
+    intro: 'Lo que toca esta noche (y lo que aún falta de «durante el día»):',
+    rangos: ['noche', 'dia'],
   },
   noche_ultimo: {
     tipo: 'aviso',

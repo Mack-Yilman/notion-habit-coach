@@ -37,11 +37,11 @@ describe('SLOTS', () => {
   it('la mañana incluye madrugada (Dormir) y durante el día', () => {
     expect(SLOTS.manana.rangos).toEqual(['madrugada', 'manana', 'dia']);
   });
-  it('«durante el día» se recuerda en la mañana, la tarde y el último llamado de la noche', () => {
+  it('«durante el día» se recuerda en los 6 avisos (cada bloque y su último llamado)', () => {
     const conDia = Object.entries(SLOTS)
       .filter(([k, s]) => k !== 'cierre' && s.rangos.includes('dia'))
       .map(([k]) => k);
-    expect(conDia).toEqual(['manana', 'tarde', 'noche_ultimo']);
+    expect(conDia).toEqual(['manana', 'manana_ultimo', 'tarde', 'tarde_ultimo', 'noche', 'noche_ultimo']);
   });
   it('el cierre abarca todos los rangos', () => {
     expect(SLOTS.cierre.rangos).toHaveLength(5);
