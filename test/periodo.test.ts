@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { fichaPeriodo, renderCifras, renderMapaMes, resumir, semanaYPrevia } from '../src/periodo';
+import { ajusteParaGuardar, extraerAjuste, fichaPeriodo, lineaAjusteAnterior, renderCifras, renderCifrasDia, renderMapaMes, resumir, semanaYPrevia } from '../src/periodo';
 import { esUltimoDiaDelMes, inicioMes, mesAnterior, nombreMes } from '../src/time';
-import type { Entry } from '../src/habits';
+import type { Entry, Stats } from '../src/habits';
 
 const e = (nombre: string, fecha: string, estado: Entry['estado'], rango: Entry['rango'] = 'manana'): Entry => ({
   pageId: `${nombre}-${fecha}`,
@@ -41,7 +41,7 @@ describe('fechas del mes', () => {
 describe('resumir y cifras', () => {
   it('cuenta Parcial o mejor como cumplido y solo dentro del rango de fechas', () => {
     const r = resumir([e('Gym', '2026-10-01', 'parcial'), e('Gym', '2026-10-02', 'omitido'), e('Gym', '2026-09-30', 'hecho')], '2026-10-01', '2026-10-31');
-    expect(r.total).toEqual({ ok: 1, tot: 2 });
+    expect(r.total).toEqual({ ok: 1, tot: 2, fuerte: 0 });
   });
 
   it('semana contra semana anterior: cumplimiento, mejor y peor hábito, y cambios', () => {
@@ -114,5 +114,170 @@ describe('fichaPeriodo', () => {
     expect(fichaPeriodo([], resumir([], '2026-10-01', '2026-10-31'), null, {}, {})).toBe('');
     const f = fichaPeriodo(serie('Gym', '2026-10-01', 3, 5), resumir(serie('Gym', '2026-10-01', 3, 5), '2026-10-01', '2026-10-31'), null, {}, {});
     expect(f).not.toMatch(/hoy|ayer/i);
+  });
+});
+
+describe('renderCifras calidad y parciales', () => {
+  it('calidad con y sin fuerte en el periodo anterior', () => {
+    const actual = {
+      desde: '2026-10-19',
+      hasta: '2026-10-25',
+      total: { ok: 8, tot: 10, fuerte: 6 },
+      porHabito: {
+        Gym: { ok: 4, tot: 5, fuerte: 2 },
+        Dormir: { ok: 4, tot: 5, fuerte: 4 },
+      },
+      porRango: {},
+    };
+
+    const cSinPrevio = renderCifras(actual, null, 'semana anterior');
+    expect(cSinPrevio).toContain('⚡ Calidad: <b>60 %</b> en Hecho o mejor');
+    expect(cSinPrevio).not.toContain('pts');
+    expect(cSinPrevio).toContain('🕯️ Más en Parcial: Gym 2/5');
+
+    const previoSinFuerte = {
+      desde: '2026-10-12',
+      hasta: '2026-10-18',
+      total: { ok: 5, tot: 10 },
+      porHabito: {},
+      porRango: {},
+    };
+    const cPrevioSinFuerte = renderCifras(actual, previoSinFuerte, 'semana anterior');
+    expect(cPrevioSinFuerte).toContain('⚡ Calidad: <b>60 %</b> en Hecho o mejor');
+    const lineaCalidad = cPrevioSinFuerte.split('\n').find((l) => l.includes('Calidad'));
+    expect(lineaCalidad).toBe('⚡ Calidad: <b>60 %</b> en Hecho o mejor');
+
+    const previoConFuerte = {
+      desde: '2026-10-12',
+      hasta: '2026-10-18',
+      total: { ok: 5, tot: 10, fuerte: 4 },
+      porHabito: {},
+      porRango: {},
+    };
+    const cPrevioConFuerte = renderCifras(actual, previoConFuerte, 'semana anterior');
+    expect(cPrevioConFuerte).toContain('⚡ Calidad: <b>60 %</b> en Hecho o mejor · 🔼 +20 pts');
+  });
+});
+
+describe('renderCifrasDia', () => {
+  it('el caso del formato completo y con líneas omitidas', () => {
+    const entries = [
+      e('Gym', '2026-10-12', 'hecho'),
+      e('Dormir', '2026-10-12', 'hecho'),
+      e('Agua', '2026-10-12', 'hecho'),
+      e('Comer', '2026-10-12', 'hecho'),
+      e('Pasear', '2026-10-12', 'hecho'),
+      e('Escribir', '2026-10-12', 'hecho'),
+      e('Leer', '2026-10-12', 'parcial'),
+      e('Estudiar', '2026-10-12', 'parcial'),
+      e('Meditar', '2026-10-12', 'sin_iniciar'),
+    ];
+    entries[0]!.habitId = 'h-sube';
+    entries[8]!.habitId = 'h-gasta';
+    const entriesExtra = [
+      ...entries,
+      { ...e('Correr', '2026-10-12', 'sin_iniciar'), habitId: 'h-pierde' },
+    ];
+    const sMap: Record<string, Stats> = {
+      'h-sube': { habitId: 'h-sube', nombre: 'Gym', state: { racha: 1, mejor: 1, congeladores: 2, procesadoHasta: null } },
+      'h-gasta': { habitId: 'h-gasta', nombre: 'Meditar', state: { racha: 5, mejor: 5, congeladores: 1, procesadoHasta: null } },
+      'h-pierde': { habitId: 'h-pierde', nombre: 'Correr', state: { racha: 4, mejor: 4, congeladores: 0, procesadoHasta: null } },
+    };
+
+    const c = renderCifrasDia(entriesExtra, sMap);
+    expect(c).toBe(
+      '<b>📈 Hoy</b>\n' +
+      'Cumplidos: <b>8/10</b> · 🕯️ 2 en Parcial · ⚡ 6 en Hecho o mejor\n' +
+      '🔥 Rachas que suben: 1\n' +
+      '🧊 Se gastarían: 1\n' +
+      '💔 Rachas que se perderían: 1'
+    );
+
+    const entriesOmitidas = [
+      { ...e('Gym', '2026-10-12', 'hecho'), habitId: 'h-sube' },
+    ];
+    const cOmit = renderCifrasDia(entriesOmitidas, sMap);
+    expect(cOmit).toBe(
+      '<b>📈 Hoy</b>\n' +
+      'Cumplidos: <b>1/1</b> · ⚡ 1 en Hecho o mejor\n' +
+      '🔥 Rachas que suben: 1'
+    );
+
+    expect(renderCifrasDia([], {})).toBe('');
+  });
+});
+
+describe('extraerAjuste', () => {
+  const nombres = ['Ir al gimnasio', 'Gimnasio', 'Leer 20 páginas', 'Meditar'];
+
+  it('con hábito, sin hábito, sin etiqueta, con <b> dentro de la frase', () => {
+    const htmlConHabito = `
+<b>🏆 Logro</b>
+Semana excelente.
+
+<b>🔧 Ajuste:</b> Bajar el objetivo de Ir al gimnasio a 15 minutos.
+
+<b>🎯 Foco</b>
+Descansar el domingo.`;
+    const resCon = extraerAjuste(htmlConHabito, nombres);
+    expect(resCon).toEqual({
+      texto: 'Bajar el objetivo de Ir al gimnasio a 15 minutos.',
+      habito: 'Ir al gimnasio',
+    });
+
+    const htmlSinHabito = `
+<b>🔧 Ajuste</b>
+Cambiar la alarma general para levantarse 10 minutos antes.
+
+<b>🎯 Foco</b>
+Mantener el ritmo.`;
+    const resSin = extraerAjuste(htmlSinHabito, nombres);
+    expect(resSin).toEqual({
+      texto: 'Cambiar la alarma general para levantarse 10 minutos antes.',
+      habito: null,
+    });
+
+    const htmlSinEtiqueta = `
+<b>🏆 Logro</b>
+Todo cumplido.`;
+    expect(extraerAjuste(htmlSinEtiqueta, nombres)).toBeNull();
+
+    const htmlConTagInterno = `
+<b>🔧 Ajuste</b>
+Ajustar la señal de <b>Meditar</b> justo antes de dormir.
+Esta segunda línea forma parte del ajuste.
+
+<b>🎯 Foco</b>
+Seguir así.`;
+    const resInterno = extraerAjuste(htmlConTagInterno, nombres);
+    expect(resInterno).toEqual({
+      texto: 'Ajustar la señal de Meditar justo antes de dormir.\nEsta segunda línea forma parte del ajuste.',
+      habito: 'Meditar',
+    });
+  });
+});
+
+describe('ajuste anterior', () => {
+  const actual = { desde: '2026-10-19', hasta: '2026-10-25', total: { ok: 5, tot: 7 }, porHabito: { Gym: { ok: 5, tot: 7 } }, porRango: {} };
+
+  it('una frase que empieza con el hábito en negrita no corta el bloque', () => {
+    expect(extraerAjuste('<b>🔧 Ajuste</b>\n<b>Gym</b> pasa a la mañana.\n\n<b>🎯 Foco</b>\nSeguir.', ['Gym'])).toEqual({ texto: 'Gym pasa a la mañana.', habito: 'Gym' });
+  });
+  it('no compara la calidad contra un periodo vacío', () => {
+    const vacio = { desde: 'a', hasta: 'b', total: { ok: 0, tot: 0, fuerte: 0 }, porHabito: {}, porRango: {} };
+    expect(renderCifras({ ...actual, total: { ok: 5, tot: 7, fuerte: 4 } }, vacio, 'x')).not.toContain('pts');
+  });
+  it('acepta el emoji fuera de la negrita', () => {
+    expect(extraerAjuste('🔧 <b>Ajuste</b>\nMover Gym.\n\n🎯 <b>Foco</b>\nSeguir.', ['Gym'])).toEqual({ texto: 'Mover Gym.', habito: 'Gym' });
+  });
+  it('guarda la tasa del hábito y la compara después', () => {
+    const g = ajusteParaGuardar({ texto: 'Mover Gym', habito: 'Gym' }, '2026-10-18', { ...actual, porHabito: { Gym: { ok: 3, tot: 6 } } });
+    expect(g.tasaAntes).toBe(50);
+    expect(lineaAjusteAnterior(g, actual)).toContain('Gym pasó de 50 % a 71 %');
+  });
+  it('sin hábito identificado va sin cifra', () => {
+    const g = ajusteParaGuardar({ texto: 'Dormir antes', habito: null }, '2026-10-18', actual);
+    expect(g.tasaAntes).toBeNull();
+    expect(lineaAjusteAnterior(g, actual)).toContain('Sin cifra disponible');
   });
 });
