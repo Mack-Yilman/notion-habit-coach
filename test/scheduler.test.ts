@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { closeDays, recalcular, revisarSalud, runScheduled } from '../src/scheduler';
+import { armarSemana, closeDays, recalcular, revisarSalud, runScheduled } from '../src/scheduler';
+import { addDays } from '../src/time';
 import { matricesFor, tarjetasABorrar } from '../src/app';
 import { TIMEOUT_CRON_MS } from '../src/coach';
 import { cerrada, fakeApp, num, row } from './fakes';
@@ -192,6 +193,44 @@ describe('«durante el día» en los 6 avisos', () => {
   });
 });
 
+describe('ajuste anterior', () => {
+  const filas = [row('g', 'h-gym', 'Gym', '2026-10-14', '⚡ Hecho')];
+  const data: any = { stats: {}, matrices: {}, ultimos: [] };
+  const todas: any[] = [{ pageId: 'g', habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-14', estado: 'hecho', rango: 'dia', objetivo: '', identidad: '' }];
+  const preparar = () => {
+    const f = fakeApp(NOW, filas);
+    const prompts: string[] = [];
+    (f.app as any).llm = async (o: any) => {
+      prompts.push(o.messages.map((m: any) => m.content).join('\n'));
+      return { content: '<b>🔧 Ajuste</b>\nMover Gym a la mañana.', toolCalls: [] };
+    };
+    return { ...f, prompts };
+  };
+
+  it('un /semana no guarda; la revisión del domingo sí', async () => {
+    const { app, kv } = preparar();
+    await armarSemana(app, data, todas, 1000);
+    expect(kv.m.get('coach:ajuste')).toBeUndefined();
+    await armarSemana(app, data, todas, undefined, true);
+    expect(JSON.parse(kv.m.get('coach:ajuste')!)).toMatchObject({ texto: 'Mover Gym a la mañana.', habito: 'Gym', tasaAntes: 100 });
+  });
+
+  it('con menos de 6 días ni evalúa ni pisa; con 6 o más evalúa y renueva', async () => {
+    const { app, kv, prompts } = preparar();
+    const fecha = app.now.date;
+    kv.m.set('coach:ajuste', JSON.stringify({ fecha: addDays(fecha, -3), texto: 'viejo', habito: 'Gym', tasaAntes: 50 }));
+    await armarSemana(app, data, todas, undefined, true);
+    expect(prompts[0]).not.toContain('AJUSTE ANTERIOR (');
+    expect(JSON.parse(kv.m.get('coach:ajuste')!).texto).toBe('viejo');
+
+    kv.m.set('coach:ajuste', JSON.stringify({ fecha: addDays(fecha, -7), texto: 'viejo', habito: 'Gym', tasaAntes: 50 }));
+    await armarSemana(app, data, todas, undefined, true);
+    expect(prompts[1]).toContain('Gym pasó de 50 % a 100 %');
+    expect(prompts[1]).toContain('🔁 Ajuste anterior');
+    expect(JSON.parse(kv.m.get('coach:ajuste')!).fecha).toBe(fecha);
+  });
+});
+
 describe('balance mensual', () => {
   // 31/10 23:05 en Lima = 01/11 04:05 UTC
   const FIN_DE_MES = '2026-11-01T04:05:00Z';
@@ -210,7 +249,7 @@ describe('balance mensual', () => {
     expect(sent.findIndex((s) => s.text.includes('Cierre del día'))).toBeLessThan(sent.indexOf(mes[0]!));
     expect(mes[0]!.text).toContain('📈 Cifras');
     expect(kv.m.get('sent:2026-10-31:mes')).toBe('hecho');
-    expect(JSON.parse(kv.m.get('resumen:mes:2026-10')!).total).toEqual({ ok: 2, tot: 3 });
+    expect(JSON.parse(kv.m.get('resumen:mes:2026-10')!).total).toEqual({ ok: 2, tot: 3, fuerte: 2 });
   });
 
   it('compara con el snapshot del mes anterior', async () => {

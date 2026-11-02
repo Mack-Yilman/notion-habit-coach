@@ -13,7 +13,11 @@ import {
   matchEntry,
   momentoDe,
   proyeccion,
+  riesgosReales,
+  parcialesSeguidos,
+  focoManana,
   SYSTEM_PROMPT,
+  tareaCierre,
   TAREA_MES,
   TAREA_RESUMEN,
   TAREA_SEMANA,
@@ -59,7 +63,169 @@ describe('proyeccion', () => {
     expect(proyeccion(entry(), stats(5, 0))).toContain('pierde la racha de 5 días');
   });
   it('un hecho sube la racha', () => {
-    expect(proyeccion(entry({ estado: 'hecho' }), stats(6, 1))).toBe('racha sube a 7 y gana 1 🧊');
+    expect(proyeccion(entry({ estado: 'hecho' }), stats(6, 1))).toBe('ya cumplido: racha sube a 7 y gana 1 🧊');
+  });
+});
+
+describe('riesgosReales', () => {
+  it('filtra según estado, racha y congeladores', () => {
+    const d = data({
+      entries: [
+        entry({ pageId: 'p-1', nombre: 'Gym', estado: 'parcial', habitId: 'h-gym' }),
+        entry({ pageId: 'p-2', nombre: 'Leer', estado: 'sin_iniciar', habitId: 'h-leer' }),
+        entry({ pageId: 'p-3', nombre: 'Meditar', estado: 'sin_iniciar', habitId: 'h-meditar' }),
+        entry({ pageId: 'p-4', nombre: 'Agua', estado: 'omitido', habitId: 'h-agua' }),
+        entry({ pageId: 'p-5', nombre: 'Correr', estado: 'sin_iniciar', habitId: 'h-correr' }),
+      ],
+      stats: {
+        'h-gym': stats(5, 1),
+        'h-leer': stats(4, 1),
+        'h-meditar': stats(3, 0),
+        'h-agua': stats(5, 1),
+        'h-correr': stats(0, 1),
+      },
+    });
+    const riesgos = riesgosReales(d);
+    expect(riesgos).toHaveLength(2);
+    expect(riesgos.map((r) => r.nombre)).toEqual(['Leer', 'Meditar']);
+    expect(riesgos[0]!.proyeccion).toContain('gasta 1 🧊');
+    expect(riesgos[1]!.proyeccion).toContain('pierde la racha');
+  });
+});
+
+describe('parcialesSeguidos', () => {
+  it('2 días da null; 3 sí; día intermedio Hecho corta; día sin fila corta', () => {
+    const d2 = data({
+      fecha: '2026-10-12',
+      entries: [entry({ habitId: 'h-gym', nombre: 'Gym', estado: 'parcial' })],
+      semana: [entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-11', estado: 'parcial' })],
+    });
+    expect(parcialesSeguidos(d2)).toBeNull();
+
+    const d3 = data({
+      fecha: '2026-10-12',
+      entries: [entry({ habitId: 'h-gym', nombre: 'Gym', estado: 'parcial' })],
+      semana: [
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-11', estado: 'parcial' }),
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-10', estado: 'parcial' }),
+      ],
+    });
+    expect(parcialesSeguidos(d3)).toEqual({ nombre: 'Gym', dias: 3 });
+
+    const dHecho = data({
+      fecha: '2026-10-12',
+      entries: [entry({ habitId: 'h-gym', nombre: 'Gym', estado: 'parcial' })],
+      semana: [
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-11', estado: 'hecho' }),
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-10', estado: 'parcial' }),
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-09', estado: 'parcial' }),
+      ],
+    });
+    expect(parcialesSeguidos(dHecho)).toBeNull();
+
+    const dSinFila = data({
+      fecha: '2026-10-12',
+      entries: [entry({ habitId: 'h-gym', nombre: 'Gym', estado: 'parcial' })],
+      semana: [
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-10', estado: 'parcial' }),
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-09', estado: 'parcial' }),
+      ],
+    });
+    expect(parcialesSeguidos(dSinFila)).toBeNull();
+  });
+});
+
+describe('focoManana', () => {
+  it('elige el más flojo; todo al 100 % usa el primero; con menos de 3 filas no cuenta; incluye Señal y mínima', () => {
+    const dFlojo = data({
+      fecha: '2026-10-12',
+      entries: [
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-12', estado: 'hecho' }),
+        entry({ habitId: 'h-leer', nombre: 'Leer', fecha: '2026-10-12', estado: 'sin_iniciar' }),
+      ],
+      semana: [
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-11', estado: 'hecho' }),
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-10', estado: 'hecho' }),
+        entry({ habitId: 'h-leer', nombre: 'Leer', fecha: '2026-10-11', estado: 'hecho' }),
+        entry({ habitId: 'h-leer', nombre: 'Leer', fecha: '2026-10-10', estado: 'sin_iniciar' }),
+      ],
+      matrices: {
+        'h-leer': { senal: 'Antes de dormir', protocolo: { parcial: 'Leer 1 página' } },
+      },
+    });
+    expect(focoManana(dFlojo)).toEqual({
+      nombre: 'Leer',
+      motivo: 'el más flojo de los últimos 7 días: 1 de 3',
+      senal: 'Antes de dormir',
+      minima: 'Leer 1 página',
+    });
+
+    const d100 = data({
+      fecha: '2026-10-12',
+      entries: [
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-12', estado: 'hecho', rango: 'manana' }),
+        entry({ habitId: 'h-leer', nombre: 'Leer', fecha: '2026-10-12', estado: 'hecho', rango: 'noche' }),
+      ],
+      semana: [
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-11', estado: 'hecho' }),
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-10', estado: 'hecho' }),
+        entry({ habitId: 'h-leer', nombre: 'Leer', fecha: '2026-10-11', estado: 'hecho' }),
+        entry({ habitId: 'h-leer', nombre: 'Leer', fecha: '2026-10-10', estado: 'hecho' }),
+      ],
+    });
+    expect(focoManana(d100)).toMatchObject({
+      nombre: 'Gym',
+      motivo: 'es el primero que toca mañana',
+    });
+
+    const dMenos3 = data({
+      fecha: '2026-10-12',
+      entries: [
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-12', estado: 'hecho', rango: 'manana' }),
+        entry({ habitId: 'h-nuevo', nombre: 'Nuevo', fecha: '2026-10-12', estado: 'sin_iniciar', rango: 'tarde' }),
+      ],
+      semana: [
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-11', estado: 'hecho' }),
+        entry({ habitId: 'h-gym', nombre: 'Gym', fecha: '2026-10-10', estado: 'hecho' }),
+        entry({ habitId: 'h-nuevo', nombre: 'Nuevo', fecha: '2026-10-11', estado: 'sin_iniciar' }),
+      ],
+    });
+    expect(focoManana(dMenos3)).toMatchObject({
+      nombre: 'Gym',
+      motivo: 'es el primero que toca mañana',
+    });
+  });
+});
+
+describe('falso aviso de 🧊', () => {
+  const tesis = entry({ nombre: 'Tesis', estado: 'parcial' });
+  it('un hábito en Parcial no da riesgo ni etiqueta «Ojo con»', () => {
+    const d = data({ entries: [tesis] });
+    expect(buildContext(d)).toContain('RIESGOS REALES (sin registrar: gastarían 🧊 o perderían la racha al cierre de las 03:00): ninguno');
+    expect(tareaCierre(d)).not.toContain('Ojo con');
+  });
+  it('un pendiente con racha sí trae la etiqueta, con su nombre', () => {
+    expect(tareaCierre(data())).toContain('<b>⚠️ Ojo con</b> — solo estos hábitos');
+    expect(tareaCierre(data())).toContain('Ir al gimnasio');
+  });
+  it('Omitido se lista aparte y no como riesgo', () => {
+    const c = buildContext(data({ entries: [entry({ estado: 'omitido' })] }));
+    expect(c).toContain('): ninguno');
+    expect(c).toContain('OMITIDOS HOY (pausa consciente, gastan 🧊 al cierre; no insistas): Ir al gimnasio');
+  });
+  it('Omitido sin 🧊 con racha sí es riesgo: pierde la racha', () => {
+    const c = buildContext(data({ entries: [entry({ estado: 'omitido' })], stats: { 'h-gym': stats(5, 0) } }));
+    expect(c).toContain('pierde la racha de 5 días');
+    expect(c).not.toContain('OMITIDOS HOY');
+  });
+  it('un hábito que aún no toca no alarma en el contexto', () => {
+    expect(buildContext(data({ hora: '08:00' }))).toContain('): ninguno');
+  });
+  it('3 días en Parcial agregan «Subir de nivel»', () => {
+    const semana = [11, 10].map((n) => entry({ fecha: `2026-10-${n}`, estado: 'parcial' }));
+    const t = tareaCierre(data({ entries: [entry({ estado: 'parcial' })], semana }));
+    expect(t).toContain('🪜 Subir de nivel');
+    expect(t).toContain('lleva 3 días');
   });
 });
 

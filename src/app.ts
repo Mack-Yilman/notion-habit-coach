@@ -20,7 +20,7 @@ import { Notion } from './notion';
 import { parseSchedule, type SlotKey } from './schedule';
 import { stripTags, Telegram } from './telegram';
 import { addDays, localNow, type LocalNow } from './time';
-import type { CoachData } from './coach';
+import { MEMORIA_CHARS, type CoachData } from './coach';
 
 export interface App {
   env: Env;
@@ -203,7 +203,7 @@ export async function getUltimos(app: App): Promise<string[]> {
 
 /** Guarda el texto de un cierre o resumen (los últimos 3) para que el coach no se repita. */
 export async function guardarUltimo(app: App, html: string): Promise<void> {
-  const txt = stripTags(html).replace(/\s+/g, ' ').trim().slice(0, 300);
+  const txt = stripTags(html).replace(/\s+/g, ' ').trim().slice(0, MEMORIA_CHARS);
   if (!txt) return;
   const prev = await getUltimos(app);
   await app.kv.put(ULTIMOS_KEY, JSON.stringify([...prev, txt].slice(-3)), { expirationTtl: 7 * 86400 });

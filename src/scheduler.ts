@@ -16,8 +16,21 @@ import {
   type App,
 } from './app';
 import { getCachedMatrices } from './matrix';
-import { buildContextPeriodo, buildHistorial, coachCierre, coachMes, coachSemana, TIMEOUT_CRON_MS, type CoachData } from './coach';
-import { fichaPeriodo, renderCifras, renderMapaMes, resumir, semanaYPrevia, snapshotMesKey, type ResumenPeriodo } from './periodo';
+import { buildContextPeriodo, buildHistorial, coachCierre, coachMes, coachSemana, ETIQUETA_AJUSTE_ANTERIOR, TIMEOUT_CRON_MS, type CoachData } from './coach';
+import {
+  ajusteParaGuardar,
+  extraerAjuste,
+  fichaPeriodo,
+  lineaAjusteAnterior,
+  renderCifras,
+  renderCifrasDia,
+  renderMapaMes,
+  resumir,
+  semanaYPrevia,
+  snapshotMesKey,
+  type AjusteGuardado,
+  type ResumenPeriodo,
+} from './periodo';
 import { hasStreakProps, isPending, NOMBRE_PREFIX, parseEntry, streakProperties, type Entry, type HabitosSchema, type Stats } from './habits';
 import { headerAviso, LEYENDA, renderMapa } from './messages';
 import { dueSlots, SLOTS, VENTANA_MIN, type SlotKey } from './schedule';
@@ -223,10 +236,11 @@ async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {
   const data = await coachData(app, hoy, { historia: hist.filter((e) => e.fecha !== app.now.date) });
   let cuerpo: string;
   if (domingo) {
-    cuerpo = await armarSemana(app, data, hist);
+    cuerpo = await armarSemana(app, data, hist, undefined, true);
   } else {
-    cuerpo = await coachCierre(app.llm, data, TIMEOUT_CRON_MS);
-    await guardarUltimo(app, cuerpo);
+    const texto = await coachCierre(app.llm, data, TIMEOUT_CRON_MS);
+    await guardarUltimo(app, texto);
+    cuerpo = [renderCifrasDia(hoy, data.stats), texto].filter(Boolean).join('\n\n');
   }
   const titulo = domingo ? '📊 Revisión semanal' : SLOTS.cierre.titulo;
   const pendientes = hoy.filter(isPending);
@@ -241,14 +255,29 @@ async function enviarCierre(app: App, hoy: Entry[]): Promise<string> {
  * Cuerpo de la revisión semanal: cifras calculadas aquí (últimos 7 días contra los 7
  * anteriores), texto del coach y mapa de 14 días. `todas` trae hoy y los 13 días previos.
  */
-export async function armarSemana(app: App, data: CoachData, todas: Entry[], timeoutMs?: number): Promise<string> {
+const AJUSTE_KEY = 'coach:ajuste';
+
+export async function armarSemana(app: App, data: CoachData, todas: Entry[], timeoutMs?: number, programada = false): Promise<string> {
   const hasta = app.now.date;
   const desde = addDays(hasta, -13);
   const { actual, previo } = semanaYPrevia(todas, hasta);
   const cifras = renderCifras(actual, previo, 'los 7 días anteriores');
   const contexto = buildContextPeriodo(data, `${actual.desde} a ${actual.hasta} (semana) contra ${previo.desde} a ${previo.hasta}`, fichaPeriodo(todas, actual, previo, data.stats, data.matrices));
-  const texto = await coachSemana(app.llm, contexto, `${buildHistorial(todas, desde, hasta)}\n\nCIFRAS (semana actual contra la anterior):\n${stripTags(cifras)}`, timeoutMs);
+  const guardado = await app.kv.get<AjusteGuardado>(AJUSTE_KEY, 'json');
+  // Menos de 6 días aún no hay qué evaluar. Solo la revisión del domingo guarda: un /semana a media
+  // semana fecharía el ajuste y el domingo ya no lo evaluaría.
+  const vencido = !guardado || diffDays(guardado.fecha, hasta) >= 6;
+  const anterior = guardado && vencido ? lineaAjusteAnterior(guardado, actual) : '';
+  const texto = await coachSemana(
+    app.llm,
+    anterior ? `${contexto}\n\n${anterior}` : contexto,
+    `${buildHistorial(todas, desde, hasta)}\n\nCIFRAS (semana actual contra la anterior):\n${stripTags(cifras)}`,
+    timeoutMs,
+    anterior ? ETIQUETA_AJUSTE_ANTERIOR : '',
+  );
   await guardarUltimo(app, texto);
+  const nuevo = programada && vencido ? extraerAjuste(texto, Object.keys(actual.porHabito)) : null;
+  if (nuevo) await app.kv.put(AJUSTE_KEY, JSON.stringify(ajusteParaGuardar(nuevo, hasta, actual)), { expirationTtl: 30 * 86400 });
   return [cifras, texto, renderMapa(todas, desde, hasta)].filter(Boolean).join('\n\n');
 }
 

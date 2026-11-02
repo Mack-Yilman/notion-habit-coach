@@ -1,14 +1,15 @@
 // Cifras de un periodo (semana o mes), calculadas por el Worker: el coach las interpreta,
 // no las calcula. Lógica pura, sin red.
 
-import { RANGO_BY_KEY } from './config';
+import { ESTADO_BY_KEY, normalize, RANGO_BY_KEY } from './config';
 import { sortEntries, type Entry, type Stats } from './habits';
-import { outcomeFromEstado } from './streak';
+import { outcomeFromEstado, step } from './streak';
 import type { Matrix } from './matrix';
 import { addDays, dateRange, DIAS_LARGOS, formatCorto, weekdayOf } from './time';
 import { esc } from './telegram';
 
 export interface Tasa {
+  fuerte?: number;
   ok: number;
   tot: number;
 }
@@ -24,20 +25,23 @@ export interface ResumenPeriodo {
 const MIN_FILAS = 3; // menos filas no dan una tasa que valga la pena comparar
 
 const pct = (t: Tasa) => (t.tot ? Math.round((t.ok / t.tot) * 100) : 0);
-const suma = (m: Record<string, Tasa>, k: string, ok: number) => {
-  const t = (m[k] ??= { ok: 0, tot: 0 });
+const suma = (m: Record<string, Tasa>, k: string, ok: number, fuerte?: number) => {
+  const t = (m[k] ??= fuerte !== undefined ? { ok: 0, tot: 0, fuerte: 0 } : { ok: 0, tot: 0 });
   t.ok += ok;
   t.tot += 1;
+  if (fuerte !== undefined) t.fuerte = (t.fuerte ?? 0) + fuerte;
 };
 
 export function resumir(entries: Entry[], desde: string, hasta: string): ResumenPeriodo {
-  const r: ResumenPeriodo = { desde, hasta, total: { ok: 0, tot: 0 }, porHabito: {}, porRango: {} };
+  const r: ResumenPeriodo = { desde, hasta, total: { ok: 0, tot: 0, fuerte: 0 }, porHabito: {}, porRango: {} };
   for (const e of entries) {
     if (!e.fecha || e.fecha < desde || e.fecha > hasta) continue;
     const ok = outcomeFromEstado(e.estado ?? null) === 'done' ? 1 : 0;
+    const fuerte = e.estado && ESTADO_BY_KEY[e.estado]?.nivel >= 3 ? 1 : 0;
     r.total.ok += ok;
     r.total.tot += 1;
-    suma(r.porHabito, e.nombre, ok);
+    r.total.fuerte = (r.total.fuerte ?? 0) + fuerte;
+    suma(r.porHabito, e.nombre, ok, fuerte);
     suma(r.porRango, e.rango ? RANGO_BY_KEY[e.rango].label : 'Sin rango', ok);
   }
   return r;
@@ -67,12 +71,28 @@ export function renderCifras(actual: ResumenPeriodo, previo: ResumenPeriodo | nu
   const hay = previo && previo.total.tot > 0;
   const cmp = hay ? ` · ${flecha(pct(actual.total) - pct(previo!.total))} pts vs. ${etiquetaPrevio} (${pct(previo!.total)} %)` : '';
   lineas.push(`Cumplimiento: <b>${pct(actual.total)} %</b> (${actual.total.ok}/${actual.total.tot})${cmp}`);
+  if (actual.total.fuerte !== undefined) {
+    const calActual = actual.total.tot ? Math.round((actual.total.fuerte / actual.total.tot) * 100) : 0;
+    let cmpCal = '';
+    if (hay && previo?.total?.fuerte !== undefined) {
+      const calPrev = previo.total.tot ? Math.round((previo.total.fuerte / previo.total.tot) * 100) : 0;
+      cmpCal = ` · ${flecha(calActual - calPrev)} pts`;
+    }
+    lineas.push(`⚡ Calidad: <b>${calActual} %</b> en Hecho o mejor${cmpCal}`);
+  }
 
   const hab = ordenar(actual);
   const mejor = hab[0];
   const peor = hab[hab.length - 1];
   if (mejor) lineas.push(`💪 Más constante: ${esc(mejor.nombre)} ${mejor.p} %`);
   if (peor && peor !== mejor && peor.p < 100) lineas.push(`🌧️ Más flojo: ${esc(peor.nombre)} ${peor.p} %`);
+  const enParcial = Object.entries(actual.porHabito)
+    .map(([nombre, t]) => ({ nombre, n: t.ok - (t.fuerte ?? 0), m: t.tot }))
+    .filter((h) => h.n >= 2)
+    .sort((a, b) => b.n - a.n || a.nombre.localeCompare(b.nombre, 'es'));
+  if (enParcial[0]) {
+    lineas.push(`🕯️ Más en Parcial: ${esc(enParcial[0].nombre)} ${enParcial[0].n}/${enParcial[0].m}`);
+  }
 
   const rangos = Object.entries(actual.porRango)
     .filter(([, t]) => t.tot >= MIN_FILAS)
@@ -153,6 +173,8 @@ export function fichaPeriodo(
     if (antes && antes.tot >= MIN_FILAS && t.tot >= MIN_FILAS) campos.push(`vs. periodo anterior ${flecha(pct(t) - pct(antes))} pts`);
     const omitidos = fs.filter((e) => e.estado === 'omitido').length;
     if (omitidos) campos.push(`${omitidos} omitidos`);
+    const parciales = fs.filter((e) => e.estado === 'parcial').length;
+    if (parciales > 0) campos.push(`${parciales} en Parcial`);
     // Tendencia semana a semana: el modelo dice si mejora, empeora o se mantiene sin inventarlo.
     const dias7 = dateRange(actual.desde, actual.hasta);
     if (dias7.length > 7) {
@@ -178,4 +200,103 @@ export function fichaPeriodo(
     return `- ${campos.join(' | ')}`;
   });
   return lineas.length ? `FICHA POR HÁBITO DEL PERIODO (${actual.desde} a ${actual.hasta}; cumplido = Parcial o mejor):\n${lineas.join('\n')}` : '';
+}
+
+/**
+ * Cifras resumidas del día para el mensaje de Telegram.
+ */
+export function renderCifrasDia(entries: Entry[], stats: Record<string, Stats>): string {
+  if (!entries.length) return '';
+  const tot = entries.length;
+  const cumplidos = entries.filter((e) => outcomeFromEstado(e.estado ?? null) === 'done').length;
+  const parciales = entries.filter((e) => e.estado === 'parcial').length;
+  const fuertes = entries.filter((e) => e.estado && ESTADO_BY_KEY[e.estado]?.nivel >= 3).length;
+
+  const tramos = [`Cumplidos: <b>${cumplidos}/${tot}</b>`];
+  if (parciales > 0) tramos.push(`🕯️ ${parciales} en Parcial`);
+  if (fuertes > 0) tramos.push(`⚡ ${fuertes} en Hecho o mejor`);
+
+  const lineas = ['<b>📈 Hoy</b>', tramos.join(' · ')];
+
+  let suben = 0;
+  let congelados = 0;
+  let perdidas = 0;
+
+  for (const e of entries) {
+    const st = e.habitId ? stats[e.habitId]?.state : undefined;
+    if (!st) continue;
+    const r = step(st, outcomeFromEstado(e.estado ?? null));
+    if (r.event === 'sumo') suben++;
+    else if (r.event === 'congelado') congelados++;
+    else if (r.event === 'reinicio' && st.racha > 0) perdidas++;
+  }
+
+  if (suben > 0) lineas.push(`🔥 Rachas que suben: ${suben}`);
+  if (congelados > 0) lineas.push(`🧊 Se gastarían: ${congelados}`);
+  if (perdidas > 0) lineas.push(`💔 Rachas que se perderían: ${perdidas}`);
+
+  return lineas.join('\n');
+}
+
+// Una etiqueta ocupa toda su línea: una frase que empieza con un hábito en <b> no corta el bloque.
+// El modelo a veces deja el emoji fuera de la negrita.
+const ES_ETIQUETA = /^\s*(?:\p{Extended_Pictographic}️?\s*)?<b[^>]*>[^<]*<\/b>\s*$/iu;
+
+/**
+ * Extrae el bloque de ajuste del mensaje semanal y detecta a qué hábito se refiere.
+ */
+export function extraerAjuste(html: string, nombres: string[]): { texto: string; habito: string | null } | null {
+  const match = /(?:🔧\s*<b[^>]*>\s*|<b[^>]*>\s*🔧\s*)Ajuste[^<]*<\/b>/i.exec(html);
+  if (!match) return null;
+
+  const rest = html.slice(match.index + match[0].length);
+  const rawLines = rest.split(/\r?\n/);
+  const collected: string[] = [];
+  let started = false;
+
+  for (const line of rawLines) {
+    if (!started) {
+      if (line.trim() === '') continue;
+      if (ES_ETIQUETA.test(line)) break;
+      started = true;
+      collected.push(line);
+    } else {
+      if (line.trim() === '') break;
+      if (ES_ETIQUETA.test(line)) break;
+      collected.push(line);
+    }
+  }
+
+  const texto = collected.join('\n').replace(/<[^>]+>/g, '').trim();
+  if (!texto) return null;
+
+  const normTexto = normalize(texto);
+  const candidatos = nombres.filter((n) => n && normTexto.includes(normalize(n)));
+  let habito: string | null = null;
+  if (candidatos.length > 0) {
+    candidatos.sort((a, b) => b.length - a.length);
+    habito = candidatos[0]!;
+  }
+
+  return { texto, habito };
+}
+
+export interface AjusteGuardado {
+  fecha: string;
+  texto: string;
+  habito: string | null;
+  /** Tasa del hábito cuando se propuso el ajuste. */
+  tasaAntes: number | null;
+}
+
+export function ajusteParaGuardar(a: { texto: string; habito: string | null }, fecha: string, actual: ResumenPeriodo): AjusteGuardado {
+  const t = a.habito ? actual.porHabito[a.habito] : undefined;
+  return { fecha, texto: a.texto, habito: a.habito, tasaAntes: t ? pct(t) : null };
+}
+
+/** Línea para el contexto del coach: la comparación la calcula el Worker. Sin datos, va sin cifra. */
+export function lineaAjusteAnterior(a: AjusteGuardado, actual: ResumenPeriodo): string {
+  const t = a.habito ? actual.porHabito[a.habito] : undefined;
+  const cifra = a.habito && t && a.tasaAntes !== null ? ` Resultado: ${a.habito} pasó de ${a.tasaAntes} % a ${pct(t)} %.` : ' Sin cifra disponible.';
+  return `AJUSTE ANTERIOR (propuesto el ${a.fecha}): ${a.texto}${cifra}`;
 }

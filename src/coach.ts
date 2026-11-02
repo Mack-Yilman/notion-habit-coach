@@ -16,19 +16,24 @@ export const SYSTEM_PROMPT = `Eres «Coach», el entrenador de hábitos personal
 - Cada hábito tiene una Matriz Atómica: Señal (hacerlo obvio), Anhelo (hacerlo atractivo), Respuesta (hacerlo sencillo) y Recompensa (hacerlo satisfactorio).
 - Cada hábito sirve a una Identidad (por ejemplo «Cuerpo limpio» o «Estudiante de alto rendimiento»): cada repetición es un voto por esa identidad.
 - Protocolo de Ejecución Flexible, de menor a mayor: ⚪ Sin iniciar (0), 💤 Omitido (1, pausa consciente), 🕯️ Parcial (2, la versión mínima), ⚡ Hecho (3), 🔥 Superado (4), 🚀 Alto impacto (5).
-- Rachas: Parcial o mejor suma un día. Omitido o Sin iniciar al cerrar el día gastan un congelador 🧊; sin congeladores la racha vuelve a 0. Se gana un 🧊 cada 7 días seguidos, máximo 2. El día se cierra a las 03:00 del día siguiente.
+- Qué significa cada estado para la racha:
+  · ⚪ Sin iniciar: aún no cumple; se puede registrar hasta las 03:00.
+  · 💤 Omitido: pausa consciente; no cumple y también activa un 🧊.
+  · 🕯️ Parcial: YA CUMPLIÓ. Suma un día y nunca gasta 🧊; no es un pendiente ni un riesgo.
+  · ⚡ Hecho, 🔥 Superado, 🚀 Alto impacto: cumplen y suman a la racha igual que Parcial; se diferencian en la calidad, no en la racha.
+- Congeladores 🧊: se activan solo en el cierre de las 03:00 y solo si el hábito sigue en Sin iniciar u Omitido: gasta 1 y conserva la racha. Sin 🧊, la racha vuelve a 0. Se gana 1 🧊 cada 7 días de racha, máximo 2. Habla de gastar 🧊 o perder la racha solo de los hábitos en RIESGOS REALES u OMITIDOS HOY.
 - Los hábitos se agrupan por rango horario (madrugada, mañana, tarde, noche, durante el día). El usuario es flexible dentro de cada rango: no tiene horas fijas.
 
 Cómo respondes:
 - En español, tuteando, con un tono cálido y alentador: estás de su lado. Empieza reconociendo algo concreto y real que sí hizo (de AYER, HOY, ÚLTIMOS 7 DÍAS o, si la TAREA es un periodo, de ese periodo), con su cifra. Sin sermones, sin culpa, sin frases hechas ni motivación genérica.
-- Usa SOLO lo que está en DATOS. Las cifras ya vienen calculadas: no las recalcules ni inventes otras. Si falta un dato, no lo supongas.
+- Usa SOLO lo que está en DATOS. Las cifras ya vienen calculadas: no las recalcules ni inventes otras. Si falta un dato, no lo supongas. Cita una Señal o versión mínima solo si aparece en DATOS; nunca la redactes tú.
 - Respeta el MOMENTO y la columna «cuándo»: nunca pidas hacer ahora un hábito que «aún no toca»; como mucho, menciónalo como lo próximo. La columna «al cerrar el día» dice qué pasaría con la racha en el cierre de las 03:00, no ahora.
 - Si no hay un riesgo real, no lo inventes: celebra y deja descansar. Si todo va bien, no exijas más.
 - Sé concreto: nombra el hábito y, cuando ayude, cita su Señal o su versión mínima (nivel Parcial del protocolo).
 - Ante un fallo, sin culpa: «nunca falles dos veces» y la versión mínima antes que exigir el 100 %.
 - Si un hábito que falla aparece en SIN SEÑAL DEFINIDA, una buena sugerencia es definir su Señal (cuándo y dónde, anclada a algo que ya hace) en la Matriz Atómica de Notion.
 - Varía: no repitas aperturas, frases ni ideas de TUS ÚLTIMOS MENSAJES. La frase de identidad es opcional; úsala solo si aporta algo nuevo.
-- Formato: HTML de Telegram, solo <b> e <i>. Nada de Markdown, encabezados, tablas ni listas. Emojis pocos y con sentido, para que se vea amigable: el de cada etiqueta de la TAREA y, como mucho, uno más suelto.
+- Formato: HTML de Telegram, solo <b> e <i>. Nada de Markdown, encabezados, tablas ni listas. Emojis pocos y con sentido, para que se vea amigable: el de cada etiqueta de la TAREA y, como mucho, uno más suelto. 🧊 significa congelador: nunca lo uses de adorno.
 - Si la TAREA pide etiquetas, úsalas tal cual (en <b>, cada una en su propia línea) con 1 o 2 frases debajo y una línea en blanco entre bloques. No mezcles ideas de una etiqueta en otra ni des más de un consejo.
 - Si DATOS trae «CIFRAS», ya se muestran aparte al usuario: úsalas para interpretar, sin repetirlas todas.
 - Respeta el límite de palabras de la TAREA.`;
@@ -53,6 +58,9 @@ export interface CoachData {
 
 // ---------- Contexto (puro) ----------
 
+/** Alcanza para las últimas etiquetas: con 250, «Mañana» no entraba y se repetía «Duerme tranquilo». */
+export const MEMORIA_CHARS = 700;
+
 function estadoTxt(e: Entry): string {
   const d = e.estado ? ESTADO_BY_KEY[e.estado] : ESTADO_BY_KEY.sin_iniciar;
   return `${d.icon} ${d.label}`;
@@ -66,7 +74,7 @@ export function proyeccion(e: Entry, st: Stats | undefined): string | null {
   if (r.event === 'congelado') return `si queda así, gasta 1 🧊 y conserva la racha de ${st.state.racha} (le quedarían ${r.state.congeladores} 🧊)`;
   if (r.event === 'reinicio')
     return st.state.racha > 0 ? `si queda así, pierde la racha de ${st.state.racha} días (sin 🧊)` : 'si queda así, sigue en 0';
-  if (r.event === 'sumo') return `racha sube a ${r.state.racha}${r.ganoCongelador ? ' y gana 1 🧊' : ''}`;
+  if (r.event === 'sumo') return `ya cumplido: racha sube a ${r.state.racha}${r.ganoCongelador ? ' y gana 1 🧊' : ''}`;
   return null;
 }
 
@@ -177,6 +185,126 @@ export function buildTendencia(semana: Entry[], hoy: string, stats: Record<strin
   return lines.join('\n');
 }
 
+/**
+ * Lo que arriesga la racha al cierre: pendientes que gastarían 🧊 o la perderían, y Omitidos que
+ * la perderían por no tener 🧊 (gastar uno en un Omitido es una pausa decidida, no un riesgo).
+ */
+export function riesgosReales(d: CoachData): { nombre: string; proyeccion: string }[] {
+  const result: { nombre: string; proyeccion: string }[] = [];
+  const min = minutosDe(d.hora);
+  for (const e of sortEntries(d.entries)) {
+    if (!isPending(e) && e.estado !== 'omitido') continue;
+    if (!e.habitId || aunNoToca(e, min)) continue;
+    const st = d.stats[e.habitId];
+    if (!st || st.state.racha <= 0) continue;
+    const r = step(st.state, outcomeFromEstado(e.estado ?? null));
+    if (r.event === 'reinicio' || (r.event === 'congelado' && isPending(e))) {
+      const proy = proyeccion(e, st);
+      if (proy) {
+        result.push({ nombre: e.nombre, proyeccion: proy });
+      }
+    }
+  }
+  return result;
+}
+
+/** Hábito con más días seguidos en Parcial terminando hoy (mínimo 3). */
+export function parcialesSeguidos(d: CoachData): { nombre: string; dias: number } | null {
+  const hoyEntries = sortEntries(d.entries ?? []);
+  let mejor: { nombre: string; dias: number } | null = null;
+
+  for (const e of hoyEntries) {
+    if (e.estado !== 'parcial') continue;
+    let dias = 1;
+    let curr = d.fecha;
+
+    while (true) {
+      curr = addDays(curr, -1);
+      const fila = (d.semana ?? []).find(
+        (r) =>
+          r.fecha === curr &&
+          (e.habitId && r.habitId ? r.habitId === e.habitId : normalize(r.nombre) === normalize(e.nombre)),
+      );
+      if (!fila || fila.estado !== 'parcial') break;
+      dias++;
+    }
+
+    if (dias >= 3) {
+      if (!mejor || dias > mejor.dias) {
+        mejor = { nombre: e.nombre, dias };
+      }
+    }
+  }
+
+  return mejor;
+}
+
+/** Hábito a priorizar mañana: el más flojo de los últimos 7 días o el primero del día. */
+export function focoManana(d: CoachData): { nombre: string; motivo: string; senal?: string; minima?: string } | null {
+  if (!d.entries || d.entries.length === 0) return null;
+  const hoyEntries = sortEntries(d.entries);
+  if (hoyEntries.length === 0) return null;
+
+  const desde = addDays(d.fecha, -6);
+  const hasta = d.fecha;
+
+  const todas = [...d.entries, ...(d.semana ?? [])];
+  const filas7 = todas.filter((e) => e.fecha && e.fecha >= desde && e.fecha <= hasta);
+
+  interface HabitoFoco {
+    entry: Entry;
+    tasa: number;
+    ok: number;
+    tot: number;
+  }
+
+  const candidatos: HabitoFoco[] = [];
+  const vistos = new Set<string>();
+
+  for (const e of hoyEntries) {
+    const k = e.habitId ?? normalize(e.nombre);
+    if (vistos.has(k)) continue;
+    vistos.add(k);
+
+    const fs = filas7.filter((r) =>
+      e.habitId && r.habitId ? r.habitId === e.habitId : normalize(r.nombre) === normalize(e.nombre),
+    );
+    const tot = fs.length;
+    if (tot < 3) continue;
+    const ok = fs.filter((r) => outcomeFromEstado(r.estado ?? null) === 'done').length;
+    if (ok === tot) continue;
+    candidatos.push({ entry: e, tasa: ok / tot, ok, tot });
+  }
+
+  let elegido: Entry;
+  let motivo: string;
+
+  if (candidatos.length > 0) {
+    let peor = candidatos[0]!;
+    for (let i = 1; i < candidatos.length; i++) {
+      if (candidatos[i]!.tasa < peor.tasa) {
+        peor = candidatos[i]!;
+      }
+    }
+    elegido = peor.entry;
+    motivo = `el más flojo de los últimos 7 días: ${peor.ok} de ${peor.tot}`;
+  } else {
+    elegido = hoyEntries[0]!;
+    motivo = 'es el primero que toca mañana';
+  }
+
+  const res: { nombre: string; motivo: string; senal?: string; minima?: string } = {
+    nombre: elegido.nombre,
+    motivo,
+  };
+
+  const m = elegido.habitId ? d.matrices?.[elegido.habitId] : undefined;
+  if (m?.senal) res.senal = m.senal;
+  if (m?.protocolo?.parcial) res.minima = m.protocolo.parcial;
+
+  return res;
+}
+
 export function buildContext(d: CoachData, matrizPara: 'pendientes' | 'todos' | string[] = 'pendientes'): string {
   const entries = sortEntries(d.entries);
   const dia = DIAS_LARGOS[weekdayOf(d.fecha)];
@@ -206,6 +334,10 @@ export function buildContext(d: CoachData, matrizPara: 'pendientes' | 'todos' | 
     const fallo = e.habitId && d.fallosAyer?.includes(e.habitId) ? ' | AYER FALLÓ: no debe fallar dos veces' : '';
     lines.push(`- ${e.nombre} | ${rango} | ${cuandoToca(e, min)} | ${e.objetivo || 'sin objetivo'} | ${estadoTxt(e)} | ${racha} | ${hielo} | ${proy}${ident}${fallo}`);
   }
+  const riesgos = riesgosReales(d);
+  lines.push('', `RIESGOS REALES (sin registrar: gastarían 🧊 o perderían la racha al cierre de las 03:00): ${riesgos.length ? riesgos.map((r) => `${r.nombre} (${r.proyeccion})`).join('; ') : 'ninguno'}`);
+  const omitidos = entries.filter((e) => e.estado === 'omitido' && !riesgos.some((r) => r.nombre === e.nombre)).map((e) => e.nombre);
+  if (omitidos.length) lines.push(`OMITIDOS HOY (pausa consciente, gastan 🧊 al cierre; no insistas): ${omitidos.join('; ')}`);
   if (d.ayer?.length) {
     lines.push('', 'PENDIENTES DE AYER (aún se pueden registrar con dia="ayer"; el día se cierra a las 03:00):');
     for (const e of d.ayer) lines.push(`- ${e.nombre} | ${e.rango ? RANGO_BY_KEY[e.rango].label : 'sin rango'} | ${e.objetivo || 'sin objetivo'}`);
@@ -225,7 +357,7 @@ export function buildContext(d: CoachData, matrizPara: 'pendientes' | 'todos' | 
   const sinSenal = elegidos.filter((e) => e.habitId && d.matrices[e.habitId] && !d.matrices[e.habitId]!.senal).map((e) => e.nombre);
   if (sinSenal.length) lines.push('', `SIN SEÑAL DEFINIDA EN SU MATRIZ: ${sinSenal.join('; ')}`);
   if (d.ultimos?.length) {
-    lines.push('', 'TUS ÚLTIMOS MENSAJES (no repitas aperturas, frases ni ideas):', ...d.ultimos.map((t) => `- «${t.slice(0, 250)}»`));
+    lines.push('', 'TUS ÚLTIMOS MENSAJES (no repitas aperturas, frases ni ideas):', ...d.ultimos.map((t) => `- «${t.slice(0, MEMORIA_CHARS)}»`));
   }
   return lines.join('\n');
 }
@@ -281,24 +413,44 @@ export function buildHistorial(historial: Entry[], desde: string, hasta: string)
 
 // ---------- Tareas ----------
 
-export const TAREA_CIERRE = `TAREA: mensaje de cierre del día, máximo 110 palabras, con estas etiquetas:
-<b>🌟 Lo mejor de hoy</b> — lo mejor del día con la cifra de HOY y, si suma, algo de ÚLTIMOS 7 DÍAS (días completos seguidos, un récord, una recuperación).
-<b>⚠️ Ojo con</b> — solo si queda un pendiente que aún se puede registrar antes de las 03:00 y su columna «al cerrar el día» dice que gasta 🧊 o pierde la racha: nómbralo, di qué se perdería y propone su versión mínima. Si no hay riesgo, omite esta etiqueta completa; no lo inventes.
-<b>🎯 Mañana</b> — una línea cálida con una sola acción para descansar o empezar mañana.`;
+/**
+ * El Worker decide qué etiquetas existen: un modelo llenaba «Ojo con» con un hábito en Parcial
+ * aunque la tarea le pedía omitirla. Sin riesgo real, la etiqueta no llega a la tarea.
+ */
+export function tareaCierre(d: CoachData): string {
+  const riesgos = riesgosReales(d);
+  const parcial = parcialesSeguidos(d);
+  const foco = focoManana(d);
+  const lineas = [
+    'TAREA: mensaje de cierre del día, máximo 140 palabras, solo con estas etiquetas y en este orden. Las CIFRAS del día ya se muestran arriba: no las repitas todas.',
+    '<b>🌟 Lo mejor de hoy</b> — lo mejor del día con una cifra de HOY y, si suma, algo de ÚLTIMOS 7 DÍAS (días completos seguidos, un récord, una recuperación).',
+  ];
+  if (riesgos.length) {
+    lineas.push(`<b>⚠️ Ojo con</b> — solo estos hábitos, que aún se pueden registrar antes de las 03:00: ${riesgos.map((r) => `${r.nombre} (${r.proyeccion})`).join('; ')}. Di qué se perdería y cita su versión mínima solo si está en MATRIZ ATÓMICA Y PROTOCOLO; si no, no la menciones.`);
+  }
+  if (parcial) {
+    lineas.push(`<b>🪜 Subir de nivel</b> — ${parcial.nombre} lleva ${parcial.dias} días seguidos en 🕯️ Parcial. Reconoce que sostuvo la racha e invita, sin presión, a probar un ⚡ Hecho cuando pueda. No hables de 🧊: este hábito no corre ningún riesgo.`);
+  }
+  if (foco) {
+    const apoyo = [foco.senal && `Señal: ${foco.senal}`, foco.minima && `versión mínima: ${foco.minima}`].filter(Boolean).join('; ');
+    lineas.push(`<b>🎯 Mañana</b> — una línea cálida con una sola acción sobre ${foco.nombre} (${foco.motivo}${apoyo ? `; ${apoyo}` : ''}).${foco.minima ? '' : ' No tiene versión mínima definida: no le inventes una ni digas cuánto hacer.'}`);
+  }
+  return lineas.join('\n');
+}
 
 export const TAREA_RESUMEN = `TAREA: resumen que el usuario pidió con /resumen, máximo 100 palabras, con las etiquetas <b>🧭 Cómo vas</b> y <b>🎯 Lo siguiente</b>. Adáptalo al MOMENTO:
 - Madrugada: el día de hoy aún no empieza. «Cómo vas» es el balance de AYER, celebrando lo logrado. Si PENDIENTES DE AYER lista hábitos, nómbralos en «Lo siguiente»: aún se pueden registrar antes de las 03:00, con su versión mínima; si dice «ninguno», no hables de pendientes. No menciones los hábitos de hoy salvo los que estén «en su rango ahora». Invita a descansar.
 - Mañana o tarde: «Cómo vas» es la cifra de HOY; «Lo siguiente» es lo próximo que toca según «cuándo», con su versión mínima si ayuda. Sin alarmas por hábitos que aún no tocan.
-- Noche: «Cómo vas» es lo logrado hoy; «Lo siguiente» es el riesgo real de esta noche si lo hay (columna «al cerrar el día») y una acción concreta.`;
+- Noche: «Cómo vas» es lo logrado hoy; «Lo siguiente» es un hábito de RIESGOS REALES si lo hay, con una acción concreta; si dice «ninguno», no hables de riesgos.`;
 
 export const TAREA_SEMANA = `TAREA: revisión semanal, máximo 200 palabras. Habla solo del periodo de CIFRAS, la FICHA y el HISTORIAL: no menciones «hoy», «ayer» ni «ahora», el estado de hoy no forma parte de este análisis. Cada afirmación lleva su cifra. Etiquetas:
 <b>🏆 Logro</b> — el logro principal de estos días.
-<b>🔍 Patrón</b> — el más claro (hábito, rango horario o día de la semana con más fallos), con su cifra y, si es relevante, su cambio frente a la semana anterior.
+<b>🔍 Patrón</b> — el más claro, con su cifra y, si es relevante, su cambio frente a la semana anterior: un hábito, rango o día con más fallos, o un hábito que cumple pero vive en 🕯️ Parcial (cumplir no es lo mismo que la calidad; Parcial nunca es un fallo).
 <b>🔧 Ajuste</b> — UN solo ajuste concreto al sistema: mover el hábito de rango, bajar el objetivo a su versión mínima o cambiar su Señal. Explica por qué en una frase.
 <b>🎯 Foco</b> — una línea para la próxima semana, distinta del ajuste (no repitas la misma idea).`;
 
 export const TAREA_MES = `TAREA: balance del mes, máximo 220 palabras. Habla solo del periodo de CIFRAS, la FICHA y el HISTORIAL: no menciones «hoy», «ayer» ni «ahora», el estado de hoy no forma parte de este análisis. Cada afirmación lleva su cifra. Etiquetas:
-<b>📊 Balance</b> — cómo fue el mes en una o dos frases, con el cumplimiento y su cambio frente al mes anterior si existe.
+<b>📊 Balance</b> — cómo fue el mes en una o dos frases, con el cumplimiento, la calidad (% en Hecho o mejor) y su cambio frente al mes anterior si existe. Parcial cumple: nunca lo presentes como fallo.
 <b>💪 Lo que sostuvo</b> — los hábitos o rangos más constantes y por qué importa para la identidad.
 <b>🧩 Lo que se escapó</b> — el hábito, rango o día de la semana más flojo, con su cifra, sin culpa.
 <b>🔧 Ajuste</b> — UN solo ajuste concreto al sistema (mover de rango, bajar el objetivo a la versión mínima o cambiar su Señal).
@@ -382,14 +534,14 @@ export const TIMEOUT_COMANDO_MS = 20_000;
 export const TIMEOUT_CRON_MS = 45_000;
 
 /** Cierre de las 23:00 o, con `TAREA_RESUMEN`, el resumen de /resumen a cualquier hora. */
-export async function coachCierre(complete: Completer, d: CoachData, timeoutMs?: number, tarea = TAREA_CIERRE): Promise<string> {
+export async function coachCierre(complete: Completer, d: CoachData, timeoutMs?: number, tarea = tareaCierre(d)): Promise<string> {
   try {
     const r = await complete({
       messages: [
         { role: 'system', content: `${SYSTEM_PROMPT}\n\nDATOS:\n${buildContext(d)}` },
         { role: 'user', content: tarea },
       ],
-      maxTokens: 350,
+      maxTokens: 450,
       temperature: 0.7,
       timeoutMs,
     });
@@ -410,7 +562,7 @@ export function buildContextPeriodo(d: CoachData, periodo: string, ficha: string
   const lines = [`PERIODO: ${periodo}`];
   if (ficha) lines.push('', ficha);
   if (d.ultimos?.length) {
-    lines.push('', 'TUS ÚLTIMOS MENSAJES (no repitas aperturas, frases ni ideas):', ...d.ultimos.map((t) => `- «${t.slice(0, 250)}»`));
+    lines.push('', 'TUS ÚLTIMOS MENSAJES (no repitas aperturas, frases ni ideas):', ...d.ultimos.map((t) => `- «${t.slice(0, MEMORIA_CHARS)}»`));
   }
   return lines.join('\n');
 }
@@ -434,8 +586,11 @@ async function coachPeriodo(complete: Completer, contexto: string, historial: st
   }
 }
 
-export const coachSemana = (complete: Completer, contexto: string, historial: string, timeoutMs = 90_000) =>
-  coachPeriodo(complete, contexto, historial, TAREA_SEMANA, timeoutMs);
+/** La etiqueta solo existe si hay un ajuste que evaluar (`AJUSTE ANTERIOR` en el contexto). */
+export const ETIQUETA_AJUSTE_ANTERIOR = `\n<b>🔁 Ajuste anterior</b> — va primero: di en una frase si el AJUSTE ANTERIOR ayudó, según su cifra. Si no trae cifra, no la inventes: pregunta cómo le fue.`;
+
+export const coachSemana = (complete: Completer, contexto: string, historial: string, timeoutMs = 90_000, extraTarea = '') =>
+  coachPeriodo(complete, contexto, historial, TAREA_SEMANA + extraTarea, timeoutMs);
 
 export const coachMes = (complete: Completer, contexto: string, historial: string, timeoutMs = 90_000) =>
   coachPeriodo(complete, contexto, historial, TAREA_MES, timeoutMs);
